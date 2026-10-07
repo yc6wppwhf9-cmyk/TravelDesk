@@ -432,10 +432,10 @@ function loginScene() {
   const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280);
   const stars = Array.from({ length: 46 }, () =>
     `<i class="star" style="left:${(rnd() * 100).toFixed(1)}%;top:${(rnd() * 46).toFixed(1)}%;animation-delay:${(rnd() * 4).toFixed(2)}s;--s:${(1 + rnd() * 2).toFixed(1)}px"></i>`).join('');
-  const cloudSvg = '<svg viewBox="0 0 220 90" aria-hidden="true"><path d="M38 84a30 30 0 0 1 4-60 42 42 0 0 1 78-10 34 34 0 0 1 58 20 26 26 0 0 1 8 50z"/></svg>';
+  const cloudSvg = '<svg viewBox="0 0 220 90" aria-hidden="true"><defs><linearGradient id="cg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".95"/><stop offset="1" stop-color="#fbd5c0" stop-opacity=".35"/></linearGradient></defs><path fill="url(#cg)" d="M38 84a30 30 0 0 1 4-60 42 42 0 0 1 78-10 34 34 0 0 1 58 20 26 26 0 0 1 8 50z"/></svg>';
   const clouds = [
-    ['far', 3, 150, 0.2, 70, 0], ['far', 45, 110, 0.22, 90, -40], ['mid', 50, 220, 0.35, 48, -10],
-    ['mid', 63, 180, 0.32, 56, -30], ['near', 56, 320, 0.5, 34, -5], ['near', 70, 260, 0.45, 40, -24],
+    ['far', 6, 140, 0.18, 80, 0], ['far', 46, 110, 0.2, 95, -40], ['mid', 52, 240, 0.28, 55, -10],
+    ['mid', 64, 190, 0.26, 62, -35], ['near', 58, 360, 0.38, 40, -5], ['near', 71, 280, 0.34, 46, -26],
   ].map(([layer, top, w, op, dur, delay]) =>
     `<div class="sky-cloud ${layer}" style="top:${top}%;width:${w}px;opacity:${op};animation-duration:${dur}s;animation-delay:${delay}s">${cloudSvg}</div>`).join('');
 
@@ -494,6 +494,7 @@ function loginScene() {
     <svg class="skyline near" viewBox="0 0 1200 220" preserveAspectRatio="xMidYMax slice" aria-hidden="true">${near}<g>${wins}</g></svg>
     <a class="brand" href="#/login"><span class="logo">✈</span> TravelDesk</a>
     <div class="scene-copy">
+      <span class="eyebrow">Corporate Travel Desk</span>
       <h2>Business travel,<br><span class="rotator"><span>planned.</span><span>approved.</span><span>booked.</span></span></h2>
       <p>Plan within policy, get one-click approvals, and let the travel desk book everything — in one place.</p>
     </div>`;
@@ -571,12 +572,24 @@ function viewLogin() {
 
   const visual = h('div', { class: 'auth-visual' });
   visual.innerHTML = loginScene();
-  mount(
-    h('div', { class: 'auth-split' },
-      visual,
-      h('div', { class: 'auth-form' },
-        h('div', { class: 'auth' }, heading, sub, h('div', { class: 'card' }, tabs, form))))
-  );
+  const page = h('div', { class: 'auth-full' },
+    visual,
+    h('div', { class: 'auth-panel' },
+      h('div', { class: 'auth' }, heading, sub, h('div', { class: 'card glass' }, tabs, form))),
+    h('div', { class: 'auth-foot' }, `© ${new Date().getFullYear()} ${ctx.settings?.company_name || 'High Spirit Commercial Ventures Pvt Ltd'} · Travel Desk`));
+  mount(page);
+
+  // Gentle parallax: scene layers drift with the pointer.
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    let raf = 0;
+    page.addEventListener('pointermove', (e) => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        visual.style.setProperty('--px', ((e.clientX / innerWidth) * 2 - 1).toFixed(3));
+        visual.style.setProperty('--py', ((e.clientY / innerHeight) * 2 - 1).toFixed(3));
+      });
+    });
+  }
 }
 
 // ---------------------------------------------------------------- my trips
