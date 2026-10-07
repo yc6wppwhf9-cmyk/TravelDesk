@@ -50,6 +50,28 @@ Company travel portal for **High Spirit Commercial Ventures Pvt Ltd**, built aro
 - Live fares and in-app booking need a travel-supplier API (TBO, Tripjack, a corporate booking
   platform, etc.). That is the next step once credentials are available.
 
+### Group trips
+
+One person (the organiser) adds colleagues under **Who's travelling?** and submits a single request.
+The organiser's reporting manager approves it **once** for everyone, and travellers can't approve their
+own group's trip. The policy is still checked for each traveller's band. Exceptions name the people
+they apply to, e.g. *"Meena, Ravi (L2): AC Cab is above your entitlement"*. Hotel items have a
+**Rooms** field and caps are checked per room per night. Every co-traveller sees the trip under My Trips.
+
+### Distance rules and nearest airports
+
+- The app knows the coordinates of about 190 Indian towns and 95 airports (`places`, `airports` tables).
+  Rail/road journey time is estimated as straight-line distance × road factor (1.3) ÷ 50 km/h. Both
+  values can be changed under Travel Policy.
+- **Flights are only offered when that estimate is over 12 hours** (policy 5.1.1). For shorter routes
+  the *+ Flight* button is disabled and an existing flight item offers *Switch to train / cab*. The
+  database enforces the same rule.
+- If the destination has no airport, e.g. **Muzaffarpur**, the planner lists the nearest ones
+  (Darbhanga ~53 km, Patna ~66 km). One click adds the flight to that airport plus a cab leg to
+  the town. Flight search links use the right airport codes.
+- Admins add missing towns under **Travel Policy → Towns on the map**. *Find coordinates* looks
+  the town up on OpenStreetMap.
+
 An itinerary that breaks a rule can still be submitted with a justification. The manager sees each
 exception spelled out before deciding.
 
@@ -95,6 +117,9 @@ Applied to the Supabase project `TravelDesk` (`jnlrvehlenrtbdqmgbbr`), in order:
 3. `20261007000200_policy_v5_functions.sql`: V5 policy engine and admin functions
 4. `20261007000300_friendly_labels.sql`: readable class names in policy messages
 5. `20261007000400_preferred_hotels.sql`: preferred hotels per city with corporate rates
+6. `20261007000500_places_and_airports.sql`: town and airport coordinates
+7. `20261007000510_group_trips.sql`: co-travellers, trip origin, hotel rooms, visibility and approval rules
+8. `20261007000520_distance_and_group_policy.sql`: distance-based air eligibility, per-traveller policy checks
 
 `supabase/manual/cleanup_legacy_policy.sql` is an **optional** one-off script. It removes the
 placeholder grades G1–G3 and their unused columns from the first migration. The app already

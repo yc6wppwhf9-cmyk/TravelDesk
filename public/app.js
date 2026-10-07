@@ -62,6 +62,59 @@ const IATA = {
 };
 
 const cityKey = (s) => String(s || '').toLowerCase().replace(/\s*\(.*\)\s*/g, ' ').trim();
+
+// ---------------------------------------------------------------- geography
+// Places (city coordinates) and airports, loaded once. Used to estimate rail/road journey time
+// (same formula as public.surface_hours in the database) and to find the nearest airports.
+const geo = { places: {}, airports: [], loaded: null };
+function loadGeo() {
+  geo.loaded ||= Promise.all([
+    call(sb.from('places').select('name, lat, lon, state')),
+    call(sb.from('airports').select('*')),
+  ]).then(([places, airports]) => {
+    geo.places = Object.fromEntries(places.map((p) => [p.name, p]));
+    geo.airports = airports;
+  });
+  return geo.loaded;
+}
+
+function kmBetween(a, b) {
+  const rad = (d) => (d * Math.PI) / 180;
+  const x = Math.sin(rad(b.lat - a.lat) / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(rad(b.lon - a.lon) / 2) ** 2;
+  return 2 * 6371 * Math.asin(Math.sqrt(x));
+}
+const placeOf = (city) => geo.places[cityKey(city)] || null;
+
+/** { km, hours } by rail/road between two known cities, or null. */
+function surfaceEstimate(from, to) {
+  const a = placeOf(from);
+  const b = placeOf(to);
+  if (!a || !b) return null;
+  const factor = Number(ctx.settings?.road_factor) || 1.3;
+  const speed = Number(ctx.settings?.surface_speed_kmph) || 50;
+  const km = kmBetween(a, b) * factor;
+  return { km: Math.round(km), hours: Math.round((km / speed) * 10) / 10 };
+}
+
+/** Airports sorted by distance from a city: [{ iata, name, km }]. */
+function nearestAirports(city, limit = 3, maxKm = 300) {
+  const p = placeOf(city);
+  if (!p) return [];
+  return geo.airports
+    .map((a) => ({ ...a, km: Math.round(kmBetween(p, a)) }))
+    .filter((a) => a.km <= maxKm)
+    .sort((x, y) => x.km - y.km)
+    .slice(0, limit);
+}
+
+/** IATA code if the city has its own airport (within 40 km), else null. */
+function airportOf(city) {
+  const near = nearestAirports(city, 1, 40)[0];
+  return near?.iata || IATA[cityKey(city)] || null;
+}
+
+/** City name to use for an airport, e.g. "Bagdogra (Siliguri)" → "Siliguri". */
+const airportCity = (a) => (a.name.match(/\(([^)]+)\)/)?.[1] || a.name).replace(/\s*\(.*\)/, '');
 const slug = (s) => cityKey(s).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 const enc = encodeURIComponent;
 const dmy = (iso) => (iso ? iso.split('-').reverse().join('/') : '');
@@ -74,8 +127,8 @@ function searchLinks(sg, isIntl) {
   const out = [];
   if (sg.type === 'flight' && from && to) {
     out.push(['Google Flights', `https://www.google.com/travel/flights?q=${enc(`Flights from ${from} to ${to}${date ? ' on ' + date : ''} one way economy`)}`]);
-    const a = IATA[cityKey(from)];
-    const b = IATA[cityKey(to)];
+    const a = airportOf(from) || nearestAirports(from, 1, 150)[0]?.iata;
+    const b = airportOf(to) || nearestAirports(to, 1, 150)[0]?.iata;
     if (a && b && date && !isIntl) {
       out.push(['MakeMyTrip', `https://www.makemytrip.com/flight/search?itinerary=${a}-${b}-${dmy(date)}&tripType=O&paxType=A-1_C-0_I-0&intl=false&cabinClass=E`]);
       out.push(['Cleartrip', `https://www.cleartrip.com/flights/results?adults=1&childs=0&infants=0&class=Economy&depart_date=${dmy(date)}&from=${a}&to=${b}&intl=n`]);
@@ -162,6 +215,7 @@ function tripBadges(t) {
     statusBadge(t.status),
     t.is_urgent ? h('span', { class: 'badge urgent' }, 'Urgent') : null,
     t.is_international ? h('span', { class: 'badge intl' }, 'Foreign') : null,
+    t.traveller_count > 1 ? h('span', { class: 'badge intl' }, `Group of ${t.traveller_count}`) : null,
     (t.violations || []).length ? h('span', { class: 'badge oop' }, 'Out of policy') : null,
   ].filter(Boolean).reduce((acc, b) => (acc.length ? [...acc, ' ', b] : [b]), []);
 }
@@ -235,7 +289,7 @@ async function pendingApprovals() {
     sb.from('trips_view').select('*').eq('status', 'pending_approval').neq('user_id', ctx.user.id)
       .order('is_urgent', { ascending: false }).order('start_date')
   );
-  return rows.filter((t) => t.manager_id === ctx.user.id || (isAdmin() && !t.manager_id));
+  return rows.filter((t) => !(t.traveller_ids || []).includes(ctx.user.id) && (t.manager_id === ctx.user.id || (isAdmin() && !t.manager_id)));
 }
 
 function renderNav(route) {
@@ -375,7 +429,7 @@ function viewLogin() {
 
 // ---------------------------------------------------------------- my trips
 async function viewMyTrips() {
-  const trips = await call(sb.from('trips_view').select('*').eq('user_id', ctx.user.id).order('start_date', { ascending: false }));
+  const trips = await call(sb.from('trips_view').select('*').contains('traveller_ids', [ctx.user.id]).order('start_date', { ascending: false }));
   const upcoming = trips.filter((t) => ['pending_approval', 'approved', 'booked'].includes(t.status));
   const past = trips.filter((t) => !upcoming.includes(t));
 
@@ -406,8 +460,11 @@ async function viewMyTrips() {
 }
 
 // ---------------------------------------------------------------- plan a trip
-function blankSegment(type, date) {
-  return { type, from_loc: '', to_loc: '', start_date: date || '', end_date: '', travel_class: '', duration_hours: '', est_cost: '', notes: '' };
+function blankSegment(type, date, extra = {}) {
+  return {
+    type, from_loc: '', to_loc: '', start_date: date || '', end_date: '', travel_class: '',
+    duration_hours: '', est_cost: '', rooms: '1', notes: '', ...extra,
+  };
 }
 
 async function viewNewTrip() {
@@ -415,15 +472,31 @@ async function viewNewTrip() {
     return mount(h('div', { class: 'card empty' }, 'No travel policy is configured for your band yet. Please contact the travel desk.'));
   }
   const s = ctx.settings;
+  const maxH = Number(s.air_min_surface_hours);
   const state = {
-    title: '', purpose: '', destination: '', start_date: '', end_date: '',
+    title: '', purpose: '', origin: '', destination: '', start_date: '', end_date: '',
     is_international: false, is_urgent: false, urgency_reason: '', justification: '',
-    segments: [blankSegment('train')],
+    traveller_ids: [],
+    segments: [],
   };
   let lastCheck = null;
   let timer;
 
+  const [, cities, hotels, people] = await Promise.all([
+    loadGeo(),
+    call(sb.from('cities').select('name, category').order('name')),
+    call(sb.from('preferred_hotels').select('*').eq('active', true)),
+    call(sb.from('profiles').select('id, full_name, grade, department').eq('active', true).neq('id', ctx.user.id).order('full_name')),
+  ]);
+  const cityCat = Object.fromEntries(cities.map((c) => [c.name, c.category]));
+  const title = (n) => n.replace(/\b\w/g, (x) => x.toUpperCase());
+  const allCities = [...new Set([...Object.keys(geo.places), ...cities.map((c) => c.name), ...hotels.map((x) => x.city)])].sort();
+  const cityList = h('datalist', { id: 'city-list' }, allCities.map((c) => h('option', { value: title(c) })));
+  const peopleById = Object.fromEntries(people.map((p) => [p.id, p]));
+
   const segWrap = h('div');
+  const journey = h('div');
+  const addBar = h('div', { class: 'actions' });
   const checkPanel = h('div', {}, h('p', { class: 'muted small' }, 'Fill in dates and itinerary to see the policy check.'));
   const urgentReason = h('textarea', { placeholder: 'Why must this trip happen urgently?', oninput: (e) => { state.urgency_reason = e.target.value; } });
   const urgentField = field('Urgency reason', urgentReason, 'Urgent trips always go to your reporting manager.', true);
@@ -433,9 +506,10 @@ async function viewNewTrip() {
   justField.hidden = true;
   const submitBtn = h('button', { class: 'primary', type: 'submit' }, 'Submit for approval');
 
-  const bind = (key, el, evt = 'input') => {
+  const bind = (key, el, evt = 'input', after) => {
     el.addEventListener(evt, () => {
       state[key] = el.type === 'checkbox' ? el.checked : el.value;
+      after?.();
       scheduleCheck();
     });
     return el;
@@ -463,6 +537,7 @@ async function viewNewTrip() {
       ...sg,
       est_cost: sg.est_cost === '' ? 0 : Number(sg.est_cost),
       duration_hours: sg.duration_hours === '' ? null : Number(sg.duration_hours),
+      rooms: sg.type === 'hotel' ? Math.max(1, Number(sg.rooms) || 1) : 1,
       end_date: sg.end_date || null,
     }));
     const { segments: _omit, ...trip } = state;
@@ -470,6 +545,118 @@ async function viewNewTrip() {
     return { trip, segments };
   }
 
+  const groupSize = () => 1 + state.traveller_ids.length;
+
+  // ---------- travellers
+  const travellersBox = h('div');
+  function renderTravellers() {
+    const pick = select(
+      Object.fromEntries([['', '+ Add a colleague…'], ...people.filter((p) => !state.traveller_ids.includes(p.id))
+        .map((p) => [p.id, `${p.full_name} (${p.grade}${p.department ? ', ' + p.department : ''})`])]),
+      '',
+      { onchange: (e) => { if (e.target.value) { state.traveller_ids.push(e.target.value); renderTravellers(); renderSegments(); scheduleCheck(); } } }
+    );
+    travellersBox.replaceChildren(
+      h('div', { class: 'links', style: 'margin-bottom:8px' },
+        h('span', { class: 'chip' }, `${ctx.profile.full_name} (${ctx.profile.grade}) · organiser`),
+        state.traveller_ids.map((id) => h('span', { class: 'chip' },
+          `${peopleById[id]?.full_name || 'Colleague'} (${peopleById[id]?.grade || '?'}) `,
+          h('button', { type: 'button', class: 'link', title: 'Remove', onclick: () => {
+            state.traveller_ids = state.traveller_ids.filter((x) => x !== id);
+            renderTravellers(); renderSegments(); scheduleCheck();
+          } }, '✕')))),
+      pick,
+      h('div', { class: 'hint' }, groupSize() > 1
+        ? `One request for all ${groupSize()} travellers — your manager approves once. Each person's band is still checked. Enter costs for the whole group.`
+        : 'Travelling with colleagues? Add them here and book everyone in one request.'));
+  }
+
+  // ---------- journey: distance, allowed modes, nearest airports
+  function airAllowedFor(from, to) {
+    if (state.is_international) return { allowed: true };
+    const est = surfaceEstimate(from, to);
+    if (!est) return { allowed: null };
+    return { allowed: est.hours > maxH, est };
+  }
+
+  function planViaAirport(airport) {
+    const date = state.start_date;
+    const segs = [];
+    const fromAir = airportOf(state.origin) ? null : nearestAirports(state.origin, 1, 300)[0];
+    if (fromAir) {
+      segs.push(blankSegment('cab', date, { from_loc: title(cityKey(state.origin)), to_loc: airportCity(fromAir), travel_class: 'economy_cab', notes: `To ${fromAir.name} airport (${fromAir.iata})` }));
+    }
+    segs.push(blankSegment('flight', date, { from_loc: fromAir ? airportCity(fromAir) : title(cityKey(state.origin)), to_loc: airportCity(airport) }));
+    if (cityKey(airportCity(airport)) !== cityKey(state.destination)) {
+      segs.push(blankSegment('cab', date, { from_loc: airportCity(airport), to_loc: title(cityKey(state.destination)), travel_class: 'economy_cab', notes: `From ${airport.name} airport (${airport.iata})` }));
+    }
+    state.segments = state.segments.filter((x) => x.from_loc || x.to_loc || x.est_cost).concat(segs);
+    renderSegments();
+    scheduleCheck();
+    toast(`Added flight to ${airportCity(airport)}${segs.length > 1 ? ' with road connections' : ''}`);
+  }
+
+  function renderJourney() {
+    const parts = [];
+    if (state.origin.trim() && state.destination.trim()) {
+      const est = surfaceEstimate(state.origin, state.destination);
+      if (state.is_international) {
+        parts.push(h('div', { class: 'notice info' }, 'Foreign travel: flights are booked by the travel desk (45 days notice).'));
+      } else if (!est) {
+        parts.push(h('div', { class: 'notice info' },
+          `We don't have map data for ${!placeOf(state.origin) ? state.origin : state.destination} yet, so enter the rail/road journey time on any flight. (The travel desk can add the town under Travel Policy.)`));
+      } else if (est.hours > maxH) {
+        parts.push(h('div', { class: 'notice ok' },
+          `${title(cityKey(state.origin))} → ${title(cityKey(state.destination))}: about ${est.km.toLocaleString('en-IN')} km, ~${est.hours} h by rail/road. Air travel is allowed (journey over ${maxH} h).`));
+      } else {
+        parts.push(h('div', { class: 'notice warn' },
+          `${title(cityKey(state.origin))} → ${title(cityKey(state.destination))}: about ${est.km.toLocaleString('en-IN')} km, ~${est.hours} h by rail/road. `,
+          h('strong', {}, `Flights aren't allowed`), ` for journeys up to ${maxH} h — choose train, bus or cab.`));
+      }
+
+      const air = airAllowedFor(state.origin, state.destination);
+      if (air.allowed !== false && !state.is_international && placeOf(state.destination) && !airportOf(state.destination)) {
+        const near = nearestAirports(state.destination, 3, 250);
+        if (near.length) {
+          parts.push(h('div', { class: 'notice info' },
+            h('strong', {}, `${title(cityKey(state.destination))} has no airport.`), ' Nearest airports:',
+            h('div', { class: 'links', style: 'margin-top:6px' },
+              near.map((a) => h('button', { type: 'button', onclick: () => planViaAirport(a) },
+                `✈ Fly to ${airportCity(a)} (${a.iata}, ~${a.km} km) + cab`)))));
+        }
+      } else if (air.allowed === true && !state.is_international && airportOf(state.destination) && !state.segments.some((x) => x.type === 'flight')) {
+        const a = nearestAirports(state.destination, 1, 40)[0];
+        if (a) parts.push(h('div', { class: 'links' }, h('button', { type: 'button', onclick: () => planViaAirport(a) }, `✈ Add flight to ${airportCity(a)} (${a.iata})`)));
+      }
+    }
+    journey.replaceChildren(...parts);
+    renderAddBar();
+  }
+
+  function renderAddBar() {
+    const air = state.origin && state.destination ? airAllowedFor(state.origin, state.destination) : { allowed: null };
+    addBar.replaceChildren(
+      ...['train', 'flight', 'hotel', 'cab', 'bus'].map((t) =>
+        h('button', {
+          type: 'button',
+          disabled: t === 'flight' && air.allowed === false,
+          title: t === 'flight' && air.allowed === false ? `Not allowed: ~${air.est.hours} h by rail/road (policy: air only above ${maxH} h)` : '',
+          onclick: () => addSegment(t),
+        }, `+ ${SEG_TYPES[t]}`)));
+  }
+
+  function addSegment(t) {
+    const last = state.segments[state.segments.length - 1];
+    const date = last?.end_date || last?.start_date || state.start_date;
+    const extra = { travel_class: t === 'train' ? ctx.policy.rail_max_class : t === 'cab' ? 'economy_cab' : '' };
+    if (t === 'hotel') Object.assign(extra, { to_loc: title(cityKey(state.destination)), end_date: state.end_date, rooms: String(groupSize()) });
+    else if (!state.segments.length) Object.assign(extra, { from_loc: title(cityKey(state.origin)), to_loc: title(cityKey(state.destination)) });
+    state.segments.push(blankSegment(t, date, extra));
+    renderSegments();
+    scheduleCheck();
+  }
+
+  // ---------- policy panel
   function renderCheck(c) {
     justField.hidden = !c.needs_justification;
     submitBtn.textContent = c.requires_approval ? 'Submit for manager approval' : 'Submit';
@@ -477,7 +664,7 @@ async function viewNewTrip() {
     checkPanel.replaceChildren(
       v.length
         ? h('div', { class: 'notice bad' }, h('strong', {}, `${v.length} policy exception${v.length > 1 ? 's' : ''}`), h('ul', {}, v.map((x) => h('li', {}, x.message))))
-        : h('div', { class: 'notice ok' }, '✓ Itinerary is within your band entitlement'),
+        : h('div', { class: 'notice ok' }, `✓ Itinerary is within ${c.traveller_count > 1 ? 'every traveller\'s' : 'your'} band entitlement`),
       c.short_notice
         ? h('div', { class: 'notice warn' }, `Short notice: ${c.days_until_travel} day(s) before travel. Policy asks for ${c.advance_days_required} days — special approval with justification is required.`)
         : null,
@@ -485,25 +672,41 @@ async function viewNewTrip() {
         ? h('div', { class: 'notice info' }, h('strong', {}, 'Approval needed'), h('ul', {}, (c.reasons || []).map((r) => h('li', {}, r))))
         : h('div', { class: 'notice ok' }, 'No approval needed — this trip will be approved automatically.'),
       h('dl', { class: 'kv' },
+        c.traveller_count > 1 ? [h('dt', {}, 'Travellers'), h('dd', {}, `${c.traveller_count}: ${c.traveller_names}`)] : null,
         h('dt', {}, 'Itinerary estimate'), h('dd', {}, money(c.total)),
         h('dt', {}, 'Trip length'), h('dd', {}, `${c.trip_days} day(s)`),
-        h('dt', {}, 'Meals (on actuals)'), h('dd', {}, `up to ${money(c.meal_cap_per_day)}/day · ${money(c.meal_budget)}`),
-        c.laundry_allowance > 0 ? [h('dt', {}, 'Laundry'), h('dd', {}, `up to ${money(c.laundry_allowance)}`)] : null,
+        h('dt', {}, 'Meals (on actuals)'), h('dd', {}, `up to ${money(c.meal_cap_per_day)}/day per person · ${money(c.meal_budget)}`),
+        c.laundry_allowance > 0 ? [h('dt', {}, 'Laundry'), h('dd', {}, `up to ${money(c.laundry_allowance)} per person`)] : null,
         (c.hotels || []).map((ht) => [
           h('dt', {}, `Hotel (item ${ht.item})`),
-          h('dd', {}, ht.category ? `${ht.city || '—'}: cat. ${ht.category}, cap ${money(ht.cap)}/night, you entered ${money(ht.per_night)}/night` : `${ht.city || '—'}: foreign — cap agreed with manager & travel desk`),
+          h('dd', {}, ht.category
+            ? `${ht.city || '—'}: cat. ${ht.category}, cap ${money(ht.cap)}/night per room, you entered ${money(ht.per_night)}/night × ${ht.rooms || 1} room(s)`
+            : `${ht.city || '—'}: foreign — cap agreed with manager & travel desk`),
         ])
       )
     );
   }
 
+  // ---------- itinerary items
   function renderSegments() {
     segWrap.replaceChildren(
+      ...(state.segments.length ? [] : [h('p', { class: 'muted small' }, 'Add your first item below. Fill in "Travelling from" and "Main destination" above for smart suggestions.')]),
       ...state.segments.map((sg, i) => {
         const sugg = h('div', { class: 'suggest' });
-        const refreshSugg = () => sugg.replaceChildren(...suggestions(sg));
+        const isHotel = sg.type === 'hotel';
+        const durationInput = h('input', { type: 'number', min: '0', step: '0.5', value: sg.duration_hours, oninput: (e) => { sg.duration_hours = e.target.value; scheduleCheck(); } });
+        const durationField = sg.type === 'flight' && !state.is_international
+          ? field('Rail/road journey time (hours)', durationInput, `We couldn't estimate this route. Air is allowed only above ${maxH} h.`, true)
+          : null;
+        const refreshSugg = () => {
+          if (durationField) {
+            const known = !!surfaceEstimate(sg.from_loc, sg.to_loc);
+            durationField.hidden = known;
+            if (known) sg.duration_hours = '';
+          }
+          sugg.replaceChildren(...suggestions(sg, i));
+        };
         const set = (k) => (e) => { sg[k] = e.target.value; refreshSugg(); scheduleCheck(); };
-        refreshSugg();
         const typeSel = select(SEG_TYPES, sg.type, {
           onchange: (e) => {
             sg.type = e.target.value;
@@ -512,60 +715,98 @@ async function viewNewTrip() {
             scheduleCheck();
           },
         });
-        const isHotel = sg.type === 'hotel';
         const classInput =
           sg.type === 'train'
             ? field('Class', select({ '': '— select —', ...RAIL }, sg.travel_class, { onchange: set('travel_class') }), `Your entitlement: up to ${RAIL[ctx.policy.rail_max_class]}`)
             : sg.type === 'cab'
               ? field('Mode', select(CAB_CLASSES, sg.travel_class || 'economy_cab', { onchange: set('travel_class') }), `Your entitlement: ${ROAD[ctx.policy.road_max_mode]}${ctx.policy.own_vehicle_allowed ? ' or own vehicle' : ''}`)
               : null;
-        const durationInput =
-          sg.type === 'flight' && !state.is_international
-            ? field('Rail/road journey time (hours)', h('input', { type: 'number', min: '0', step: '0.5', value: sg.duration_hours, oninput: set('duration_hours') }),
-                `Air is allowed only when the surface journey exceeds ${s.air_min_surface_hours} hours.`, true)
-            : null;
-        return h('div', { class: 'segment' },
+        const el = h('div', { class: 'segment' },
           h('div', { class: 'seg-head' },
             h('span', { class: 'seg-num' }, `ITEM ${i + 1}`),
-            state.segments.length > 1
-              ? h('button', { type: 'button', class: 'link', onclick: () => { state.segments.splice(i, 1); renderSegments(); scheduleCheck(); } }, 'Remove')
-              : null),
+            h('button', { type: 'button', class: 'link', onclick: () => { state.segments.splice(i, 1); renderSegments(); renderAddBar(); scheduleCheck(); } }, 'Remove')),
           h('div', { class: 'row' },
             field('Type', typeSel),
-            isHotel ? null : field('From', h('input', { value: sg.from_loc, oninput: set('from_loc'), placeholder: 'City' })),
-            field(isHotel ? 'Hotel city' : 'To', h('input', { value: sg.to_loc, oninput: set('to_loc'), placeholder: 'City', list: isHotel ? 'city-list' : null }),
-              isHotel ? 'City category (A/B/C) sets your hotel cap' : null, isHotel),
+            isHotel ? null : field('From', h('input', { value: sg.from_loc, oninput: set('from_loc'), placeholder: 'City', list: 'city-list' })),
+            field(isHotel ? 'Hotel city' : 'To', h('input', { value: sg.to_loc, oninput: set('to_loc'), placeholder: 'City', list: 'city-list' }),
+              isHotel ? 'City category (A/B/C) sets the hotel cap' : null, isHotel),
             field(isHotel ? 'Check-in' : 'Date', h('input', { type: 'date', value: sg.start_date, oninput: set('start_date') }), null, true),
             isHotel ? field('Check-out', h('input', { type: 'date', value: sg.end_date, oninput: set('end_date') }), null, true) : null,
+            isHotel ? field('Rooms', h('input', { type: 'number', min: '1', max: '50', value: sg.rooms, oninput: set('rooms') })) : null,
             classInput,
-            durationInput,
-            field(isHotel ? 'Total cost (all nights)' : 'Estimated cost', h('input', { type: 'number', min: '0', step: '1', value: sg.est_cost, oninput: set('est_cost') }))),
+            durationField,
+            field(isHotel ? 'Total cost (all rooms, all nights)' : groupSize() > 1 ? 'Estimated cost (whole group)' : 'Estimated cost',
+              h('input', { type: 'number', min: '0', step: '1', value: sg.est_cost, oninput: set('est_cost') }))),
           field('Notes', h('input', { value: sg.notes, oninput: set('notes'), placeholder: 'Preferred timing, train/flight no., hotel name…' })),
           sugg);
+        refreshSugg();
+        return el;
       })
     );
   }
 
-  // Search links + (for hotels) the travel desk's preferred hotels in that city.
-  function suggestions(sg) {
-    const links = searchLinks(sg, state.is_international);
+  // Per-item suggestions: allowed-mode warning, nearest airports, search links, preferred hotels.
+  function suggestions(sg, idx) {
     const parts = [];
+    if (sg.type === 'flight' && !state.is_international && sg.from_loc?.trim() && sg.to_loc?.trim()) {
+      const est = surfaceEstimate(sg.from_loc, sg.to_loc);
+      if (est && est.hours <= maxH) {
+        parts.push(h('div', { class: 'notice warn' },
+          `${sg.from_loc} → ${sg.to_loc} is ~${est.hours} h by rail/road — flights are only allowed above ${maxH} h. `,
+          h('button', { type: 'button', onclick: () => {
+            Object.assign(sg, { type: 'train', travel_class: ctx.policy.rail_max_class, duration_hours: '' });
+            renderSegments(); scheduleCheck();
+          } }, 'Switch to train'), ' ',
+          h('button', { type: 'button', onclick: () => {
+            Object.assign(sg, { type: 'cab', travel_class: 'economy_cab', duration_hours: '' });
+            renderSegments(); scheduleCheck();
+          } }, 'Switch to cab')));
+      } else if (est) {
+        parts.push(h('div', { class: 'muted small' }, `~${est.km.toLocaleString('en-IN')} km, ~${est.hours} h by rail/road — air travel allowed.`));
+      }
+      for (const [end, label] of [['to_loc', 'arrival'], ['from_loc', 'departure']]) {
+        const city = sg[end];
+        if (placeOf(city) && !airportOf(city)) {
+          const near = nearestAirports(city, 3, 250);
+          if (near.length) {
+            parts.push(h('div', { class: 'links' },
+              h('span', { class: 'muted small' }, `${city} has no airport — use ${label} airport: `),
+              near.map((a) => h('button', { type: 'button', onclick: () => {
+                const town = sg[end];
+                sg[end] = airportCity(a);
+                const road = end === 'to_loc'
+                  ? blankSegment('cab', sg.start_date, { from_loc: airportCity(a), to_loc: town, travel_class: 'economy_cab', notes: `From ${a.name} airport (${a.iata})` })
+                  : blankSegment('cab', sg.start_date, { from_loc: town, to_loc: airportCity(a), travel_class: 'economy_cab', notes: `To ${a.name} airport (${a.iata})` });
+                state.segments.splice(end === 'to_loc' ? idx + 1 : idx, 0, road);
+                renderSegments(); scheduleCheck();
+                toast(`Flight now ${end === 'to_loc' ? 'lands at' : 'departs from'} ${airportCity(a)}; added a cab leg for ${town}`);
+              } }, `${airportCity(a)} (${a.iata}) ~${a.km} km`))));
+          }
+        }
+      }
+    }
+
+    const links = searchLinks(sg, state.is_international);
     if (links.length) {
       parts.push(h('div', { class: 'links' },
         h('span', { class: 'muted small' }, 'Check options: '),
         links.map(([label, url]) => h('a', { class: 'chip', href: url, target: '_blank', rel: 'noopener noreferrer' }, label, ' ↗'))));
     }
+
     if (sg.type === 'hotel' && sg.to_loc?.trim()) {
       const key = cityKey(sg.to_loc);
-      const list = hotels.filter((x) => x.city === key);
+      const list = hotels.filter((x) => x.city === key).sort((a, b) => a.rate_per_night - b.rate_per_night);
       const cat = state.is_international ? null : cityCat[key] || 'C';
       const cap = cat ? Number(ctx.policy[`hotel_cap_${cat.toLowerCase()}`]) : null;
       const nights = nightsBetween(sg.start_date, sg.end_date);
+      const rooms = Math.max(1, Number(sg.rooms) || 1);
+      if (groupSize() > 1) {
+        parts.push(h('div', { class: 'muted small' }, 'Policy 6.2: colleagues of the same or similar band and the same gender travelling together share rooms.'));
+      }
       if (list.length) {
-        list.sort((a, b) => a.rate_per_night - b.rate_per_night);
         parts.push(h('div', { class: 'hotels' },
           h('div', { class: 'small' }, h('strong', {}, `Company preferred hotels in ${sg.to_loc.trim()}`),
-            cap !== null ? h('span', { class: 'muted' }, ` · category ${cat}, your cap ${money(cap)}/night`) : null),
+            cap !== null ? h('span', { class: 'muted' }, ` · category ${cat}, your cap ${money(cap)}/night per room`) : null),
           list.map((ht) => {
             const within = cap === null || Number(ht.rate_per_night) <= cap;
             return h('div', { class: `hotel${within ? '' : ' over'}` },
@@ -580,31 +821,22 @@ async function viewNewTrip() {
                 ht.booking_url ? h('a', { class: 'chip', href: ht.booking_url, target: '_blank', rel: 'noopener noreferrer' }, 'Details ↗') : null,
                 h('button', { type: 'button', onclick: () => {
                   sg.notes = `${ht.name}${ht.area ? ', ' + ht.area : ''} (company preferred hotel)`;
-                  if (nights > 0) sg.est_cost = String(Number(ht.rate_per_night) * nights);
+                  if (nights > 0) sg.est_cost = String(Number(ht.rate_per_night) * nights * rooms);
                   renderSegments();
                   scheduleCheck();
-                  toast(nights > 0 ? `${ht.name} selected · ${nights} night(s) = ${money(sg.est_cost)}` : `${ht.name} selected — add check-in/out dates to fill the cost`);
+                  toast(nights > 0 ? `${ht.name} selected · ${nights} night(s) × ${rooms} room(s) = ${money(sg.est_cost)}` : `${ht.name} selected — add check-in/out dates to fill the cost`);
                 } }, 'Use this hotel')));
           })));
       } else if (cap !== null) {
-        parts.push(h('div', { class: 'muted small' }, `No company preferred hotel in ${sg.to_loc.trim()} yet · category ${cat}, your cap is ${money(cap)}/night.`));
+        parts.push(h('div', { class: 'muted small' }, `No company preferred hotel in ${sg.to_loc.trim()} yet · category ${cat}, your cap is ${money(cap)}/night per room.`));
       }
     }
     return parts;
   }
 
-  const [cities, hotels] = await Promise.all([
-    call(sb.from('cities').select('name, category').order('name')),
-    call(sb.from('preferred_hotels').select('*').eq('active', true)),
-  ]);
-  const cityCat = Object.fromEntries(cities.map((c) => [c.name, c.category]));
-  for (const ht of hotels) if (!cities.some((c) => c.name === ht.city)) cities.push({ name: ht.city });
-  const cityList = h('datalist', { id: 'city-list' }, cities.map((c) => h('option', { value: c.name.replace(/\b\w/g, (x) => x.toUpperCase()) })));
-
-  const intl = bind('is_international', h('input', { type: 'checkbox' }), 'change');
-  intl.addEventListener('change', renderSegments);
-  const urgent = bind('is_urgent', h('input', { type: 'checkbox' }), 'change');
-  urgent.addEventListener('change', () => { urgentField.hidden = !urgent.checked; });
+  // ---------- form
+  const intl = bind('is_international', h('input', { type: 'checkbox' }), 'change', () => { renderJourney(); renderSegments(); });
+  const urgent = bind('is_urgent', h('input', { type: 'checkbox' }), 'change', () => { urgentField.hidden = !urgent.checked; });
 
   const form = h('form', {
     onsubmit: async (e) => {
@@ -625,39 +857,34 @@ async function viewNewTrip() {
   },
     h('div', { class: 'card' },
       h('h2', {}, 'Trip details'),
-      field('Trip title', bind('title', h('input', { placeholder: 'e.g. Client visit – Mumbai', required: true })), null, true),
+      field('Trip title', bind('title', h('input', { placeholder: 'e.g. Distributor visit – Muzaffarpur', required: true })), null, true),
       h('div', { class: 'row' },
-        field('Main destination', bind('destination', h('input', { required: true, list: 'city-list' })), null, true),
+        field('Travelling from', bind('origin', h('input', { list: 'city-list', placeholder: 'Your base city' }), 'input', renderJourney)),
+        field('Main destination', bind('destination', h('input', { required: true, list: 'city-list' }), 'input', renderJourney), null, true),
         field('Start date', bind('start_date', h('input', { type: 'date', required: true })), null, true),
         field('End date', bind('end_date', h('input', { type: 'date', required: true })), null, true)),
       field('Purpose of travel', bind('purpose', h('textarea', { required: true, placeholder: 'Meetings, market visits, client, expected outcome…' })), null, true),
       h('div', { class: 'actions', style: 'gap:24px;margin-bottom:10px' },
         h('label', { class: 'check' }, intl, `Foreign travel (${s.international_advance_days} days notice)`),
         h('label', { class: 'check' }, urgent, 'This is an urgent trip')),
-      urgentField),
+      urgentField,
+      field("Who's travelling?", travellersBox)),
     h('div', { class: 'card' },
       h('h2', {}, 'Itinerary'),
       h('p', { class: 'muted small' }, 'Air and rail are booked only by the Travel Desk. Road travel may be booked by you after approval and reimbursed on actuals.'),
+      journey,
       segWrap,
-      h('div', { class: 'actions' },
-        ...['train', 'flight', 'hotel', 'cab', 'bus'].map((t) =>
-          h('button', { type: 'button', onclick: () => {
-            const last = state.segments[state.segments.length - 1];
-            state.segments.push(blankSegment(t, last?.end_date || last?.start_date || state.start_date));
-            const ns = state.segments[state.segments.length - 1];
-            ns.travel_class = t === 'train' ? ctx.policy.rail_max_class : t === 'cab' ? 'economy_cab' : '';
-            renderSegments();
-            scheduleCheck();
-          } }, `+ ${SEG_TYPES[t]}`)))),
+      addBar),
     h('div', { class: 'card' }, justField, h('div', { class: 'actions' }, submitBtn, h('a', { class: 'btn', href: '#/trips' }, 'Cancel')))
   );
 
-  state.segments[0].travel_class = ctx.policy.rail_max_class;
+  renderTravellers();
+  renderJourney();
   renderSegments();
   mount(
     cityList,
     h('div', { class: 'page-head' }, h('div', {}, h('h1', {}, 'Plan a trip'),
-      h('div', { class: 'muted' }, `Band ${ctx.profile.grade} · Domestic trips need ${s.domestic_advance_days} days notice`))),
+      h('div', { class: 'muted' }, `Band ${ctx.profile.grade} · Domestic trips need ${s.domestic_advance_days} days notice · Air only for journeys over ${maxH} h`))),
     h('div', { class: 'grid two' }, form, h('div', { class: 'card sticky' }, h('h2', {}, 'Policy check'), checkPanel))
   );
 }
@@ -730,7 +957,7 @@ async function viewTrip(id) {
 
   const segRow = (sg, i) => {
     const cls = sg.type === 'train' ? RAIL[sg.travel_class] : sg.type === 'cab' ? CAB_CLASSES[sg.travel_class] : '';
-    const route = sg.type === 'hotel' ? `${sg.to_loc}${sg.city_category ? ` (cat. ${sg.city_category})` : ''}` : [sg.from_loc, sg.to_loc].filter(Boolean).join(' → ');
+    const route = sg.type === 'hotel' ? `${sg.to_loc}${sg.city_category ? ` (cat. ${sg.city_category})` : ''}${sg.rooms > 1 ? ` · ${sg.rooms} rooms` : ''}` : [sg.from_loc, sg.to_loc].filter(Boolean).join(' → ');
     return h('tr', {},
       h('td', {}, i + 1),
       h('td', {}, SEG_TYPES[sg.type] || sg.type),
@@ -748,7 +975,9 @@ async function viewTrip(id) {
       h('div', {},
         h('div', { class: 'card' },
           h('dl', { class: 'kv' },
-            h('dt', {}, 'Traveller'), h('dd', {}, `${trip.traveller_name} (${trip.grade}${trip.department ? ', ' + trip.department : ''})`),
+            h('dt', {}, trip.traveller_count > 1 ? 'Organiser' : 'Traveller'), h('dd', {}, `${trip.traveller_name} (${trip.grade}${trip.department ? ', ' + trip.department : ''})`),
+            trip.traveller_count > 1 ? [h('dt', {}, 'Travellers'), h('dd', {}, `${trip.traveller_count}: ${trip.traveller_names}`)] : null,
+            trip.origin ? [h('dt', {}, 'From'), h('dd', {}, trip.origin)] : null,
             h('dt', {}, 'Destination'), h('dd', {}, trip.destination),
             h('dt', {}, 'Dates'), h('dd', {}, `${fmtDate(trip.start_date)} – ${fmtDate(trip.end_date)}`),
             h('dt', {}, 'Purpose'), h('dd', {}, trip.purpose),
@@ -810,7 +1039,8 @@ async function viewApprovals() {
             h('thead', {}, h('tr', {}, ['Traveller', 'Trip', 'Dates', 'Estimate', 'Flags', ''].map((c) => h('th', {}, c)))),
             h('tbody', {}, rows.map((t) =>
               h('tr', {},
-                h('td', {}, h('strong', {}, t.traveller_name), h('div', { class: 'muted small' }, `${t.grade} · ${t.department || '—'}`)),
+                h('td', {}, h('strong', {}, t.traveller_name), t.traveller_count > 1 ? h('span', { class: 'muted small' }, ` +${t.traveller_count - 1}`) : null,
+                  h('div', { class: 'muted small' }, t.traveller_count > 1 ? t.traveller_names : `${t.grade} · ${t.department || '—'}`)),
                 h('td', {}, h('a', { href: `#/trip/${t.id}` }, t.title), h('div', { class: 'muted small' }, t.destination)),
                 h('td', { class: 'nowrap' }, fmtDate(t.start_date), ' – ', fmtDate(t.end_date)),
                 h('td', { class: 'nowrap' }, money(t.total_estimate)),
@@ -884,7 +1114,7 @@ async function viewAdminBookings() {
       (!f.urgent || t.is_urgent) &&
       (!f.from || t.end_date >= f.from) &&
       (!f.to || t.start_date <= f.to) &&
-      (!f.q || [t.title, t.destination, t.traveller_name, t.booking_ref, t.traveller_email].join(' ').toLowerCase().includes(f.q.toLowerCase())));
+      (!f.q || [t.title, t.destination, t.origin, t.traveller_names, t.booking_ref, t.traveller_email].join(' ').toLowerCase().includes(f.q.toLowerCase())));
 
   const draw = () => {
     const rows = filtered();
@@ -892,7 +1122,8 @@ async function viewAdminBookings() {
     tbody.replaceChildren(...(rows.length ? rows.map((t) =>
       h('tr', { class: 'clickable', onclick: () => (location.hash = `#/trip/${t.id}`) },
         h('td', {}, `#${t.id}`),
-        h('td', {}, h('strong', {}, t.traveller_name), h('div', { class: 'muted small' }, `${t.grade} · ${t.department || '—'}`)),
+        h('td', {}, h('strong', {}, t.traveller_name), t.traveller_count > 1 ? h('span', { class: 'muted small' }, ` +${t.traveller_count - 1}`) : null,
+                  h('div', { class: 'muted small' }, t.traveller_count > 1 ? t.traveller_names : `${t.grade} · ${t.department || '—'}`)),
         h('td', {}, t.title, h('div', { class: 'muted small' }, t.destination)),
         h('td', { class: 'nowrap' }, fmtDate(t.start_date), h('div', { class: 'muted small' }, `to ${fmtDate(t.end_date)}`)),
         h('td', { class: 'nowrap' }, money(t.total_estimate)),
@@ -904,7 +1135,7 @@ async function viewAdminBookings() {
 
   const on = (k) => (e) => { f[k] = e.target.type === 'checkbox' ? e.target.checked : e.target.value; draw(); };
   const exportCsv = () => download(`traveldesk-bookings-${today}.csv`, toCSV(filtered(), [
-    ['id', 'Trip ID'], ['traveller_name', 'Traveller'], ['traveller_email', 'Email'], ['department', 'Department'],
+    ['id', 'Trip ID'], ['traveller_name', 'Organiser'], ['traveller_names', 'All travellers'], ['traveller_count', 'Group size'], ['origin', 'From'], ['traveller_email', 'Email'], ['department', 'Department'],
     ['grade', 'Band'], ['title', 'Title'], ['destination', 'Destination'], ['start_date', 'Start'], ['end_date', 'End'],
     ['status', 'Status', (r) => STATUS[r.status]], ['is_urgent', 'Urgent', (r) => (r.is_urgent ? 'Yes' : 'No')],
     ['is_international', 'Foreign', (r) => (r.is_international ? 'Yes' : 'No')],
@@ -1006,6 +1237,9 @@ async function viewAdminPolicy() {
       field('Air allowed above (surface hours)', num('air_min_surface_hours', { step: '0.5' })),
       field('Laundry / day', num('laundry_per_day')),
       field('Laundry from day', num('laundry_from_day', { min: '1' }))),
+    h('div', { class: 'row' },
+      field('Average rail/road speed (km/h)', num('surface_speed_kmph', { step: '1', min: '10' }), 'Used to estimate journey time from distance'),
+      field('Road distance factor', num('road_factor', { step: '0.05', min: '1' }), 'Road km ÷ straight-line km (≈1.3 in India)')),
     h('label', { class: 'check field' },
       h('input', { type: 'checkbox', checked: st.require_approval_all, onchange: (e) => (st.require_approval_all = e.target.checked) }),
       'All trips require Reporting Manager approval (otherwise only urgent / short-notice / out-of-policy / foreign trips do)'),
@@ -1034,6 +1268,53 @@ async function viewAdminPolicy() {
       } }, 'Save')));
   };
 
+  // Places on the map (for distance estimates and nearest airports)
+  await loadGeo();
+  const pl = { name: '', lat: '', lon: '', state: '' };
+  const plInputs = {
+    name: h('input', { placeholder: 'e.g. Sitamarhi', oninput: (e) => (pl.name = e.target.value) }),
+    lat: h('input', { type: 'number', step: '0.0001', placeholder: '26.59', oninput: (e) => (pl.lat = e.target.value) }),
+    lon: h('input', { type: 'number', step: '0.0001', placeholder: '85.49', oninput: (e) => (pl.lon = e.target.value) }),
+    state: h('input', { placeholder: 'Bihar', oninput: (e) => (pl.state = e.target.value) }),
+  };
+  const lookup = async () => {
+    if (!pl.name.trim()) return toast('Type the town name first', true);
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=in&addressdetails=1&q=${enc(pl.name)}`, { headers: { Accept: 'application/json' } });
+      const [hit] = await res.json();
+      if (!hit) return toast(`No match for "${pl.name}" — enter coordinates manually`, true);
+      pl.lat = Number(hit.lat).toFixed(4);
+      pl.lon = Number(hit.lon).toFixed(4);
+      pl.state = hit.address?.state || pl.state;
+      plInputs.lat.value = pl.lat;
+      plInputs.lon.value = pl.lon;
+      plInputs.state.value = pl.state;
+      toast(`Found: ${hit.display_name.split(',').slice(0, 3).join(',')} — check and save`);
+    } catch {
+      toast('Lookup failed — enter coordinates manually (from Google Maps: right-click → copy coordinates)', true);
+    }
+  };
+  const placesByState = {};
+  for (const p of Object.values(geo.places)) (placesByState[p.state || 'Other'] ||= []).push(p.name);
+  const placeCard = h('div', { class: 'card' },
+    h('h2', {}, 'Towns on the map'),
+    h('p', { class: 'muted small' },
+      'Distance between known towns sets the rail/road journey time (flights only above the threshold above) and powers nearest-airport suggestions. ',
+      `${Object.keys(geo.places).length} towns and ${geo.airports.length} airports are loaded. Add the towns your team visits.`),
+    h('div', { class: 'filters' },
+      field('Town', plInputs.name),
+      h('div', { class: 'field' }, h('button', { type: 'button', onclick: lookup }, '🔎 Find coordinates')),
+      field('Latitude', plInputs.lat), field('Longitude', plInputs.lon), field('State', plInputs.state),
+      h('div', { class: 'field' }, h('button', { class: 'primary', onclick: async () => {
+        await call(sb.rpc('upsert_place', { p_name: pl.name, p_lat: Number(pl.lat), p_lon: Number(pl.lon), p_state: pl.state }));
+        geo.loaded = null;
+        toast('Town saved');
+        router();
+      } }, 'Save town'))),
+    h('details', {}, h('summary', { class: 'small' }, 'Show all towns'),
+      Object.entries(placesByState).sort().map(([st, names]) =>
+        h('p', { class: 'small' }, h('strong', {}, `${st}: `), names.sort().map((n) => n.replace(/\b\w/g, (x) => x.toUpperCase())).join(', ')))));
+
   // Cities
   const cityName = h('input', { placeholder: 'City name' });
   const cityCat = select({ A: 'Category A', B: 'Category B', C: 'Category C (default)' }, 'B');
@@ -1058,7 +1339,8 @@ async function viewAdminPolicy() {
       h('div', { class: 'table-wrap' }, h('table', {},
         h('thead', {}, h('tr', {}, ['Band', 'Designations', 'Rail up to', 'Road up to', 'Own vehicle', 'Hotel A', 'Hotel B', 'Hotel C', 'Meals/day', ''].map((c) => h('th', {}, c)))),
         h('tbody', {}, bands.map(bandRow))))),
-    cityCard
+    cityCard,
+    placeCard
   );
 }
 
