@@ -1,0 +1,15 @@
+{
+  "name": "traveldesk",
+  "version": "1.0.0",
+  "description": "Corporate travel portal: employees plan itineraries against the company travel policy, managers approve urgent / out-of-policy trips, the travel desk sees and books everything in one place.",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  }
+}
