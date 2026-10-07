@@ -3,20 +3,28 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#4f46e5" />
     <title>TravelDesk</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✈</text></svg>" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <header class="topbar" id="topbar" hidden>
       <a class="brand" href="#/trips"><span class="logo">✈</span> TravelDesk</a>
+      <button class="menu-btn" id="menu-btn" aria-label="Menu" aria-expanded="false">☰</button>
       <nav id="nav"></nav>
       <div class="me">
+        <span class="avatar" id="me-avatar"></span>
         <span id="me-name"></span>
         <button class="link" id="logout">Sign out</button>
       </div>
     </header>
-    <main id="app"><p class="muted center">Loading…</p></main>
+    <main id="app">
+      <div class="skeleton"><div class="skel head"></div><div class="skel block"></div><div class="skel row"></div></div>
+    </main>
     <div id="toast" role="status" aria-live="polite"></div>
     <script type="module" src="app.js"></script>
   </body>

@@ -176,8 +176,71 @@ function h(tag, attrs = {}, ...children) {
 }
 
 function mount(...nodes) {
-  $app.replaceChildren(...nodes.flat(Infinity).filter((n) => n !== null && n !== undefined && n !== false));
+  const list = nodes.flat(Infinity).filter((n) => n !== null && n !== undefined && n !== false);
+  let i = 0;
+  for (const n of list) {
+    if (n instanceof HTMLElement && !['DATALIST', 'DIALOG'].includes(n.tagName)) {
+      n.classList.add('enter');
+      n.style.setProperty('--i', i++);
+    }
+  }
+  $app.replaceChildren(...list);
+  requestAnimationFrame(() => $app.querySelectorAll('[data-count]').forEach(countUp));
 }
+
+/** Animate a number from 0 to data-count, formatted with data-format="money" if set. */
+function countUp(el) {
+  const target = Number(el.dataset.count) || 0;
+  const fmt = el.dataset.format === 'money' ? money : (v) => Math.round(v).toLocaleString('en-IN');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce || target === 0) { el.textContent = fmt(target); return; }
+  const start = performance.now();
+  const dur = 900;
+  const step = (t) => {
+    const k = Math.min(1, (t - start) / dur);
+    el.textContent = fmt(target * (1 - Math.pow(1 - k, 3)));
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+function skeleton() {
+  $app.replaceChildren(h('div', { class: 'skeleton' }, h('div', { class: 'skel head' }), h('div', { class: 'skel block' }), h('div', { class: 'skel row' })));
+}
+
+// Material-style ripple on every button / .btn press.
+document.addEventListener('pointerdown', (e) => {
+  const b = e.target.closest('button, .btn');
+  if (!b || b.disabled || b.classList.contains('link')) return;
+  const r = b.getBoundingClientRect();
+  const size = Math.max(r.width, r.height);
+  const span = document.createElement('span');
+  span.className = 'ripple';
+  span.style.cssText = `width:${size}px;height:${size}px;left:${e.clientX - r.left - size / 2}px;top:${e.clientY - r.top - size / 2}px`;
+  b.append(span);
+  span.addEventListener('animationend', () => span.remove());
+});
+
+// Line icons for the navigation (24×24, stroke = currentColor).
+const ICONS = {
+  trips: '<path d="M3 7h18v13H3z"/><path d="M8 7V4h8v3"/><path d="M3 12h18"/>',
+  plan: '<path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/>',
+  approvals: '<path d="M9 12l2 2 4-4"/><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/>',
+  bookings: '<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+  people: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .7 3.2 2.6 3.5 5.2"/>',
+  hotels: '<path d="M3 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16"/><path d="M15 9h4a2 2 0 0 1 2 2v10"/><path d="M7 7h4M7 11h4M7 15h4M2 21h20"/>',
+  policy: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>',
+};
+function icon(name) {
+  const span = document.createElement('span');
+  span.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
+  return span.firstChild;
+}
+
+document.getElementById('menu-btn').addEventListener('click', () => {
+  const open = document.body.classList.toggle('menu-open');
+  document.getElementById('menu-btn').setAttribute('aria-expanded', String(open));
+});
 
 let toastTimer;
 function toast(msg, isError = false) {
@@ -294,25 +357,29 @@ async function pendingApprovals() {
 
 function renderNav(route) {
   const bar = document.getElementById('topbar');
+  document.body.classList.remove('menu-open');
   if (!ctx.profile) {
     bar.hidden = true;
+    document.body.classList.remove('has-shell');
     return;
   }
   bar.hidden = false;
+  document.body.classList.add('has-shell');
   document.getElementById('me-name').textContent = `${ctx.profile.full_name} · ${ctx.profile.grade}`;
+  document.getElementById('me-avatar').textContent = ctx.profile.full_name.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
   const links = [
-    ['#/trips', 'My Trips'],
-    ['#/new', 'Plan a Trip'],
-    canSeeApprovals() ? ['#/approvals', 'Approvals', ctx.pendingCount] : null,
-    isAdmin() ? ['#/admin', 'All Bookings'] : null,
-    isAdmin() ? ['#/admin/users', 'People'] : null,
-    isAdmin() ? ['#/admin/hotels', 'Preferred Hotels'] : null,
-    isAdmin() ? ['#/admin/policy', 'Travel Policy'] : null,
-    !isAdmin() ? ['#/policy', 'My Entitlements'] : null,
+    ['#/trips', 'My Trips', 'trips'],
+    ['#/new', 'Plan a Trip', 'plan'],
+    canSeeApprovals() ? ['#/approvals', 'Approvals', 'approvals', ctx.pendingCount] : null,
+    isAdmin() ? ['#/admin', 'All Bookings', 'bookings'] : null,
+    isAdmin() ? ['#/admin/users', 'People', 'people'] : null,
+    isAdmin() ? ['#/admin/hotels', 'Preferred Hotels', 'hotels'] : null,
+    isAdmin() ? ['#/admin/policy', 'Travel Policy', 'policy'] : null,
+    !isAdmin() ? ['#/policy', 'My Entitlements', 'policy'] : null,
   ].filter(Boolean);
   document.getElementById('nav').replaceChildren(
-    ...links.map(([href, label, n]) =>
-      h('a', { href, class: route === href ? 'active' : '' }, label, n ? h('span', { class: 'count' }, n) : null)
+    ...links.map(([href, label, ic, n]) =>
+      h('a', { href, class: route === href ? 'active' : '' }, icon(ic), label, n ? h('span', { class: 'count' }, n) : null)
     )
   );
 }
@@ -335,7 +402,9 @@ async function router() {
   const [, a, b] = hash.split('/');
   const route = b && a !== 'trip' ? `#/${a}/${b}` : `#/${a || 'trips'}`;
   renderNav(route);
+  document.body.classList.toggle('auth-page', a === 'login');
   window.scrollTo(0, 0);
+  if (a !== 'login') skeleton();
   try {
     if (a === 'login') return ctx.user ? (location.hash = '#/trips') : viewLogin();
     if (a === 'trips' || !a) return await viewMyTrips();
@@ -348,7 +417,7 @@ async function router() {
     if (a === 'admin' && b === 'users') return await viewAdminUsers();
     if (a === 'admin' && b === 'policy') return await viewAdminPolicy();
     if (a === 'admin' && b === 'hotels') return await viewAdminHotels();
-    mount(h('div', { class: 'card empty' }, 'Page not found.'));
+    mount(h('div', { class: 'card empty' }, h('span', { class: 'big' }, '🧭'), 'Page not found.'));
   } catch (err) {
     console.error(err);
     mount(h('div', { class: 'card empty' }, 'Could not load this page: ', err.message || String(err)));
@@ -364,6 +433,8 @@ function viewLogin() {
   const nameField = field('Full name', name, null, true);
   const submit = h('button', { class: 'primary', type: 'submit', style: 'width:100%' }, 'Sign in');
   const tabs = h('div', { class: 'tabs' });
+  const heading = h('h1', {}, 'Welcome back');
+  const sub = h('p', { class: 'muted', style: 'margin:0 0 22px' }, 'Sign in to plan and track business travel.');
   const note = h('p', { class: 'muted small' });
 
   const setMode = (m) => {
@@ -373,7 +444,11 @@ function viewLogin() {
     pass.autocomplete = m === 'signup' ? 'new-password' : 'current-password';
     note.textContent =
       m === 'signup' ? 'Use your work email. An admin will assign your band (L0–L10) and reporting manager.' : '';
+    heading.textContent = m === 'signup' ? 'Create your account' : 'Welcome back';
+    sub.textContent = m === 'signup' ? 'Join your company travel desk in a minute.' : 'Sign in to plan and track business travel.';
+    tabs.classList.toggle('right', m === 'signup');
     tabs.replaceChildren(
+      h('span', { class: 'pill' }),
       h('button', { type: 'button', class: m === 'signin' ? 'active' : '', onclick: () => setMode('signin') }, 'Sign in'),
       h('button', { type: 'button', class: m === 'signup' ? 'active' : '', onclick: () => setMode('signup') }, 'Create account')
     );
@@ -419,43 +494,87 @@ function viewLogin() {
     note
   );
   setMode('signin');
+
+  // Decorative route map: a dashed flight path with pulsing city pins and a plane flying along it.
+  const art = document.createElement('div');
+  art.innerHTML = `<svg class="route-art" viewBox="0 0 600 700" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+    <path id="flight-path" class="path" d="M70 330 C 170 200, 290 340, 370 230 S 510 100, 540 70"/>
+    <circle class="pulse" cx="70" cy="330" r="6"/><circle class="pin" cx="70" cy="330" r="6"/>
+    <circle class="pulse" cx="370" cy="230" r="5" style="animation-delay:.8s"/><circle class="pin" cx="370" cy="230" r="5"/>
+    <circle class="pulse" cx="540" cy="70" r="6" style="animation-delay:1.6s"/><circle class="pin" cx="540" cy="70" r="6"/>
+    <path class="jet" d="M16 0 L10 -2 L3 -2 L-4 -11 L-8 -11 L-4 -2 L-11 -2 L-14 -6 L-17 -6 L-15 0 L-17 6 L-14 6 L-11 2 L-4 2 L-8 11 L-4 11 L3 2 L10 2 Z">
+      <animateMotion dur="7s" repeatCount="indefinite" rotate="auto"><mpath href="#flight-path"/></animateMotion>
+    </path>
+  </svg>`;
+  const visual = h('div', { class: 'auth-visual' },
+    art.firstChild,
+    h('div', { class: 'cloud c1' }), h('div', { class: 'cloud c2' }), h('div', { class: 'cloud c3' }),
+    h('div', { class: 'brand' }, h('span', { class: 'logo' }, '✈'), ' TravelDesk'),
+    h('div', {},
+      h('h2', {}, 'Business travel,', h('br'), 'planned right the first time.'),
+      h('p', {}, 'Plan itineraries within your band entitlement, get one-click approvals, and let the travel desk book everything in one place.'),
+      h('div', { class: 'features' },
+        h('div', {}, h('span', {}, '🛡️'), 'Live travel-policy check as you plan'),
+        h('div', {}, h('span', {}, '⚡'), 'Urgent trips go straight to your manager'),
+        h('div', {}, h('span', {}, '👥'), 'Book for your whole team in one request'))));
   mount(
-    h('div', { class: 'auth' },
-      h('div', { class: 'brand' }, h('span', { class: 'logo' }, '✈'), ' TravelDesk'),
-      h('p', { class: 'muted center' }, 'Plan business travel within company policy'),
-      h('div', { class: 'card' }, tabs, form))
+    h('div', { class: 'auth-split' },
+      visual,
+      h('div', { class: 'auth-form' },
+        h('div', { class: 'auth' }, heading, sub, h('div', { class: 'card' }, tabs, form))))
   );
 }
 
 // ---------------------------------------------------------------- my trips
 async function viewMyTrips() {
   const trips = await call(sb.from('trips_view').select('*').contains('traveller_ids', [ctx.user.id]).order('start_date', { ascending: false }));
-  const upcoming = trips.filter((t) => ['pending_approval', 'approved', 'booked'].includes(t.status));
+  const today = new Date().toISOString().slice(0, 10);
+  const upcoming = trips.filter((t) => ['pending_approval', 'approved', 'booked'].includes(t.status)).reverse();
   const past = trips.filter((t) => !upcoming.includes(t));
+  const first = ctx.profile.full_name.split(' ')[0];
+  const hour = new Date().getHours();
+  const greet = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const next = upcoming.find((t) => t.end_date >= today);
+  const daysTo = next ? Math.max(0, Math.round((new Date(next.start_date) - new Date(today)) / 86400000)) : null;
 
-  const table = (rows) =>
-    rows.length
-      ? h('div', { class: 'table-wrap' },
-          h('table', {},
-            h('thead', {}, h('tr', {}, ['Trip', 'Dates', 'Estimate', 'Status'].map((c) => h('th', {}, c)))),
-            h('tbody', {}, rows.map((t) =>
-              h('tr', { class: 'clickable', onclick: () => (location.hash = `#/trip/${t.id}`) },
-                h('td', {}, h('strong', {}, t.title), h('div', { class: 'muted small' }, t.destination)),
-                h('td', { class: 'nowrap' }, fmtDate(t.start_date), ' – ', fmtDate(t.end_date)),
-                h('td', { class: 'nowrap' }, money(t.total_estimate)),
-                h('td', {}, tripBadges(t)))))))
-      : h('div', { class: 'empty' }, 'Nothing here yet.');
+  const trail = document.createElement('div');
+  trail.innerHTML = '<svg class="trail" viewBox="0 0 400 200" preserveAspectRatio="none" aria-hidden="true"><path d="M0 170 C 120 160, 200 60, 400 30" fill="none" stroke="#fff" stroke-width="2"/></svg>';
+
+  const card = (t, i) => {
+    const from = t.origin || '';
+    const to = t.destination;
+    return h('a', { class: 'trip-card', href: `#/trip/${t.id}`, 'data-status': t.status, style: `--d:${i}` },
+      h('div', { class: 'badges' }, tripBadges(t)),
+      h('div', { class: 'route' }, from ? [h('span', {}, from), h('span', { class: 'line' })] : null, h('span', {}, to)),
+      h('div', { class: 'title' }, t.title),
+      h('div', { class: 'meta' },
+        h('span', { class: 'muted' }, `📅 ${fmtDate(t.start_date)} – ${fmtDate(t.end_date)}`),
+        h('strong', {}, money(t.total_estimate))),
+      t.traveller_count > 1 ? h('div', { class: 'muted small', style: 'margin-top:6px' }, `👥 ${t.traveller_names}`) : null);
+  };
 
   mount(
-    h('div', { class: 'page-head' },
-      h('div', {}, h('h1', {}, `Hello, ${ctx.profile.full_name.split(' ')[0]}`),
-        h('div', { class: 'muted' }, `Band ${ctx.profile.grade}${ctx.policy ? ' · ' + ctx.policy.label : ''}`)),
-      h('a', { class: 'btn primary', href: '#/new' }, '+ Plan a trip')),
+    h('div', { class: 'hero' },
+      h('div', { class: 'sky' }, trail.firstChild, h('div', { class: 'cloud c1' }), h('div', { class: 'cloud c2' }), h('div', { class: 'cloud c3' }), h('div', { class: 'plane' }, '✈')),
+      h('div', { style: 'position:relative;z-index:1' },
+        h('h1', {}, `${greet}, ${first}`),
+        h('p', {}, next
+          ? (daysTo === 0 ? `You're travelling to ${next.destination} today — have a great trip!` : `Next up: ${next.destination} in ${daysTo} day${daysTo === 1 ? '' : 's'}.`)
+          : `Band ${ctx.profile.grade}${ctx.policy ? ' · ' + ctx.policy.label : ''} · No upcoming trips.`),
+        h('div', { class: 'stats' },
+          h('div', {}, h('b', { 'data-count': upcoming.length }, '0'), h('span', {}, 'Upcoming')),
+          h('div', {}, h('b', { 'data-count': trips.filter((t) => t.status === 'pending_approval').length }, '0'), h('span', {}, 'Awaiting approval')),
+          h('div', {}, h('b', { 'data-count': trips.filter((t) => t.status === 'booked').length }, '0'), h('span', {}, 'Booked')))),
+      h('a', { class: 'btn', href: '#/new' }, '✈ Plan a trip')),
     !ctx.profile.manager_id && !isAdmin()
       ? h('div', { class: 'notice warn' }, 'You have no reporting manager assigned yet, so approvals will go to the travel desk admin. Ask an admin to set your manager and band.')
       : null,
-    h('div', { class: 'card' }, h('h2', {}, 'Active & upcoming'), table(upcoming)),
-    h('div', { class: 'card' }, h('h2', {}, 'Past, rejected & cancelled'), table(past))
+    h('div', { class: 'card' },
+      h('h2', {}, 'Active & upcoming'),
+      upcoming.length
+        ? h('div', { class: 'trip-grid' }, upcoming.map(card))
+        : h('div', { class: 'empty' }, h('span', { class: 'big' }, '🧳'), 'No trips planned yet. ', h('a', { href: '#/new' }, 'Plan your first trip →'))),
+    past.length ? h('div', { class: 'card' }, h('h2', {}, 'Past, rejected & cancelled'), h('div', { class: 'trip-grid' }, past.map(card))) : null
   );
 }
 
@@ -1049,7 +1168,7 @@ async function viewApprovals() {
                   h('a', { class: 'btn', href: `#/trip/${t.id}` }, 'Review'),
                   h('button', { class: 'success', onclick: () => quick(t, 'approve') }, 'Approve'),
                   h('button', { class: 'danger', onclick: () => quick(t, 'reject') }, 'Reject'))))))))
-        : h('div', { class: 'empty' }, '🎉 Nothing waiting for your approval.')),
+        : h('div', { class: 'empty' }, h('span', { class: 'big' }, '🎉'), 'Nothing waiting for your approval.')),
     team.length
       ? h('div', { class: 'card' }, h('h2', {}, 'Recent trips by your team'),
           h('div', { class: 'table-wrap' }, h('table', {},
@@ -1103,7 +1222,7 @@ async function viewAdminBookings() {
     tile('Urgent & pending', count((t) => t.status === 'pending_approval' && t.is_urgent), true),
     tile('Approved, to book', count((t) => t.status === 'approved')),
     tile('Upcoming booked', count((t) => t.status === 'booked' && t.start_date >= today)),
-    tile('Approved spend', money(all.filter((t) => ['approved', 'booked'].includes(t.status)).reduce((a, t) => a + Number(t.total_estimate), 0))));
+    tile('Approved spend', all.filter((t) => ['approved', 'booked'].includes(t.status)).reduce((a, t) => a + Number(t.total_estimate), 0), false, 'money'));
 
   const tbody = h('tbody');
   const shown = h('span', { class: 'muted small' });
@@ -1165,8 +1284,10 @@ async function viewAdminBookings() {
   draw();
 }
 
-function tile(label, value, alert = false) {
-  return h('div', { class: `card tile${alert && value ? ' alert' : ''}` }, h('div', { class: 'num' }, value), h('div', { class: 'lbl' }, label));
+function tile(label, value, alert = false, format = '') {
+  return h('div', { class: `card tile${alert && value ? ' alert' : ''}` },
+    h('div', { class: 'num', 'data-count': value, 'data-format': format || null }, '0'),
+    h('div', { class: 'lbl' }, label));
 }
 
 // ---------------------------------------------------------------- admin: people
