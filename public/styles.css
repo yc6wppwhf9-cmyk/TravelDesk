@@ -116,6 +116,23 @@ button.link { border: 0; background: none; color: var(--brand); padding: 0; font
 .segment .seg-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
 .segment .seg-num { font-weight: 700; color: var(--muted); font-size: 0.85rem; }
 
+/* ---------- suggestions ---------- */
+.suggest:empty { display: none; }
+.suggest { border-top: 1px dashed var(--line); padding-top: 10px; margin-top: 2px; display: grid; gap: 10px; }
+.links { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.chip {
+  display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 0.82rem; font-weight: 600;
+  background: var(--brand-soft); color: var(--brand); white-space: nowrap;
+}
+.chip:hover { text-decoration: none; filter: brightness(0.97); }
+.hotels { display: grid; gap: 8px; }
+.hotel {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+  border: 1px solid var(--line); border-left: 3px solid var(--ok); border-radius: 8px; padding: 10px 12px;
+}
+.hotel.over { border-left-color: var(--warn); }
+.hotel button { padding: 5px 12px; }
+
 /* ---------- tables ---------- */
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; }

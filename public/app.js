@@ -43,6 +43,67 @@ const EVENT_LABEL = {
 };
 const ROLE_LABEL = { employee: 'Employee', manager: 'Manager', admin: 'Admin / Travel Desk' };
 
+// ---------------------------------------------------------------- search suggestions
+// Airport codes for common Indian business destinations (used to pre-fill flight searches).
+const IATA = {
+  mumbai: 'BOM', bombay: 'BOM', 'navi mumbai': 'BOM', thane: 'BOM',
+  delhi: 'DEL', 'new delhi': 'DEL', gurgaon: 'DEL', gurugram: 'DEL', noida: 'DEL', ghaziabad: 'DEL', faridabad: 'DEL',
+  bangalore: 'BLR', bengaluru: 'BLR', chennai: 'MAA', madras: 'MAA', kolkata: 'CCU', calcutta: 'CCU',
+  hyderabad: 'HYD', secunderabad: 'HYD', pune: 'PNQ', ahmedabad: 'AMD', gandhinagar: 'AMD', goa: 'GOI', panaji: 'GOI',
+  jaipur: 'JAI', lucknow: 'LKO', kochi: 'COK', cochin: 'COK', thiruvananthapuram: 'TRV', trivandrum: 'TRV',
+  guwahati: 'GAU', bhubaneswar: 'BBI', cuttack: 'BBI', patna: 'PAT', nagpur: 'NAG', indore: 'IDR', chandigarh: 'IXC',
+  srinagar: 'SXR', amritsar: 'ATQ', jalandhar: 'ATQ', varanasi: 'VNS', coimbatore: 'CJB', visakhapatnam: 'VTZ',
+  vizag: 'VTZ', ranchi: 'IXR', raipur: 'RPR', bhopal: 'BHO', vadodara: 'BDQ', baroda: 'BDQ', surat: 'STV',
+  udaipur: 'UDR', mangalore: 'IXE', mangaluru: 'IXE', madurai: 'IXM', dehradun: 'DED', leh: 'IXL',
+  'port blair': 'IXZ', jammu: 'IXJ', siliguri: 'IXB', bagdogra: 'IXB', imphal: 'IMF', agartala: 'IXA',
+  rajkot: 'RAJ', aurangabad: 'IXU', vijayawada: 'VGA', tirupati: 'TIR', jodhpur: 'JDH', kanpur: 'KNU',
+  agra: 'AGR', gwalior: 'GWL', nashik: 'ISK', nasik: 'ISK', shillong: 'SHL', dibrugarh: 'DIB', hubli: 'HBX',
+  belgaum: 'IXG', belagavi: 'IXG', mysore: 'MYQ', mysuru: 'MYQ', kozhikode: 'CCJ', calicut: 'CCJ', tiruchirappalli: 'TRZ',
+};
+
+const cityKey = (s) => String(s || '').toLowerCase().replace(/\s*\(.*\)\s*/g, ' ').trim();
+const slug = (s) => cityKey(s).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+const enc = encodeURIComponent;
+const dmy = (iso) => (iso ? iso.split('-').reverse().join('/') : '');
+
+/** Pre-filled search links on booking sites for one itinerary item. Returns [[label, url], …]. */
+function searchLinks(sg, isIntl) {
+  const from = sg.from_loc?.trim();
+  const to = sg.to_loc?.trim();
+  const date = sg.start_date;
+  const out = [];
+  if (sg.type === 'flight' && from && to) {
+    out.push(['Google Flights', `https://www.google.com/travel/flights?q=${enc(`Flights from ${from} to ${to}${date ? ' on ' + date : ''} one way economy`)}`]);
+    const a = IATA[cityKey(from)];
+    const b = IATA[cityKey(to)];
+    if (a && b && date && !isIntl) {
+      out.push(['MakeMyTrip', `https://www.makemytrip.com/flight/search?itinerary=${a}-${b}-${dmy(date)}&tripType=O&paxType=A-1_C-0_I-0&intl=false&cabinClass=E`]);
+      out.push(['Cleartrip', `https://www.cleartrip.com/flights/results?adults=1&childs=0&infants=0&class=Economy&depart_date=${dmy(date)}&from=${a}&to=${b}&intl=n`]);
+    }
+  }
+  if (sg.type === 'train' && from && to) {
+    out.push(['Trains on Google', `https://www.google.com/search?q=${enc(`trains from ${from} to ${to}${date ? ' on ' + fmtDate(date) : ''}`)}`]);
+    out.push(['IRCTC', 'https://www.irctc.co.in/nget/train-search']);
+  }
+  if (sg.type === 'bus' && from && to) {
+    out.push(['redBus', `https://www.redbus.in/bus-tickets/${slug(from)}-to-${slug(to)}`]);
+  }
+  if (sg.type === 'hotel' && to) {
+    const dates = date && sg.end_date ? `&checkin=${date}&checkout=${sg.end_date}` : '';
+    out.push(['Booking.com', `https://www.booking.com/searchresults.html?ss=${enc(to)}${dates}&group_adults=1&no_rooms=1&group_children=0`]);
+    out.push(['Google Hotels', `https://www.google.com/travel/hotels?q=${enc(`hotels in ${to}`)}`]);
+  }
+  if (sg.type === 'cab' && from && to) {
+    out.push(['Route on Google Maps', `https://www.google.com/maps/dir/${enc(from)}/${enc(to)}`]);
+  }
+  return out;
+}
+
+function nightsBetween(a, b) {
+  if (!a || !b) return 0;
+  return Math.max(0, Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000));
+}
+
 // ---------------------------------------------------------------- helpers
 /** Tiny DOM builder: h('div', {class: 'x', onclick}, 'text', child, [children]). Text is never parsed as HTML. */
 function h(tag, attrs = {}, ...children) {
@@ -62,7 +123,7 @@ function h(tag, attrs = {}, ...children) {
 }
 
 function mount(...nodes) {
-  $app.replaceChildren(...nodes);
+  $app.replaceChildren(...nodes.flat(Infinity).filter((n) => n !== null && n !== undefined && n !== false));
 }
 
 let toastTimer;
@@ -191,6 +252,7 @@ function renderNav(route) {
     canSeeApprovals() ? ['#/approvals', 'Approvals', ctx.pendingCount] : null,
     isAdmin() ? ['#/admin', 'All Bookings'] : null,
     isAdmin() ? ['#/admin/users', 'People'] : null,
+    isAdmin() ? ['#/admin/hotels', 'Preferred Hotels'] : null,
     isAdmin() ? ['#/admin/policy', 'Travel Policy'] : null,
     !isAdmin() ? ['#/policy', 'My Entitlements'] : null,
   ].filter(Boolean);
@@ -231,6 +293,7 @@ async function router() {
     if (a === 'admin' && !b) return await viewAdminBookings();
     if (a === 'admin' && b === 'users') return await viewAdminUsers();
     if (a === 'admin' && b === 'policy') return await viewAdminPolicy();
+    if (a === 'admin' && b === 'hotels') return await viewAdminHotels();
     mount(h('div', { class: 'card empty' }, 'Page not found.'));
   } catch (err) {
     console.error(err);
@@ -437,7 +500,10 @@ async function viewNewTrip() {
   function renderSegments() {
     segWrap.replaceChildren(
       ...state.segments.map((sg, i) => {
-        const set = (k) => (e) => { sg[k] = e.target.value; scheduleCheck(); };
+        const sugg = h('div', { class: 'suggest' });
+        const refreshSugg = () => sugg.replaceChildren(...suggestions(sg));
+        const set = (k) => (e) => { sg[k] = e.target.value; refreshSugg(); scheduleCheck(); };
+        refreshSugg();
         const typeSel = select(SEG_TYPES, sg.type, {
           onchange: (e) => {
             sg.type = e.target.value;
@@ -474,12 +540,65 @@ async function viewNewTrip() {
             classInput,
             durationInput,
             field(isHotel ? 'Total cost (all nights)' : 'Estimated cost', h('input', { type: 'number', min: '0', step: '1', value: sg.est_cost, oninput: set('est_cost') }))),
-          field('Notes', h('input', { value: sg.notes, oninput: set('notes'), placeholder: 'Preferred timing, train/flight no., hotel name…' })));
+          field('Notes', h('input', { value: sg.notes, oninput: set('notes'), placeholder: 'Preferred timing, train/flight no., hotel name…' })),
+          sugg);
       })
     );
   }
 
-  const cities = await call(sb.from('cities').select('name').order('name'));
+  // Search links + (for hotels) the travel desk's preferred hotels in that city.
+  function suggestions(sg) {
+    const links = searchLinks(sg, state.is_international);
+    const parts = [];
+    if (links.length) {
+      parts.push(h('div', { class: 'links' },
+        h('span', { class: 'muted small' }, 'Check options: '),
+        links.map(([label, url]) => h('a', { class: 'chip', href: url, target: '_blank', rel: 'noopener noreferrer' }, label, ' ↗'))));
+    }
+    if (sg.type === 'hotel' && sg.to_loc?.trim()) {
+      const key = cityKey(sg.to_loc);
+      const list = hotels.filter((x) => x.city === key);
+      const cat = state.is_international ? null : cityCat[key] || 'C';
+      const cap = cat ? Number(ctx.policy[`hotel_cap_${cat.toLowerCase()}`]) : null;
+      const nights = nightsBetween(sg.start_date, sg.end_date);
+      if (list.length) {
+        list.sort((a, b) => a.rate_per_night - b.rate_per_night);
+        parts.push(h('div', { class: 'hotels' },
+          h('div', { class: 'small' }, h('strong', {}, `Company preferred hotels in ${sg.to_loc.trim()}`),
+            cap !== null ? h('span', { class: 'muted' }, ` · category ${cat}, your cap ${money(cap)}/night`) : null),
+          list.map((ht) => {
+            const within = cap === null || Number(ht.rate_per_night) <= cap;
+            return h('div', { class: `hotel${within ? '' : ' over'}` },
+              h('div', {},
+                h('strong', {}, ht.name),
+                ht.area ? h('span', { class: 'muted small' }, ` · ${ht.area}`) : null,
+                h('div', { class: 'small' },
+                  `${money(ht.rate_per_night)}/night`, ht.includes_breakfast ? ' · breakfast included' : '',
+                  ' ', within ? h('span', { class: 'badge s-booked' }, 'Within your cap') : h('span', { class: 'badge oop' }, 'Above your cap')),
+                ht.notes ? h('div', { class: 'muted small' }, ht.notes) : null),
+              h('div', { class: 'actions' },
+                ht.booking_url ? h('a', { class: 'chip', href: ht.booking_url, target: '_blank', rel: 'noopener noreferrer' }, 'Details ↗') : null,
+                h('button', { type: 'button', onclick: () => {
+                  sg.notes = `${ht.name}${ht.area ? ', ' + ht.area : ''} (company preferred hotel)`;
+                  if (nights > 0) sg.est_cost = String(Number(ht.rate_per_night) * nights);
+                  renderSegments();
+                  scheduleCheck();
+                  toast(nights > 0 ? `${ht.name} selected · ${nights} night(s) = ${money(sg.est_cost)}` : `${ht.name} selected — add check-in/out dates to fill the cost`);
+                } }, 'Use this hotel')));
+          })));
+      } else if (cap !== null) {
+        parts.push(h('div', { class: 'muted small' }, `No company preferred hotel in ${sg.to_loc.trim()} yet · category ${cat}, your cap is ${money(cap)}/night.`));
+      }
+    }
+    return parts;
+  }
+
+  const [cities, hotels] = await Promise.all([
+    call(sb.from('cities').select('name, category').order('name')),
+    call(sb.from('preferred_hotels').select('*').eq('active', true)),
+  ]);
+  const cityCat = Object.fromEntries(cities.map((c) => [c.name, c.category]));
+  for (const ht of hotels) if (!cities.some((c) => c.name === ht.city)) cities.push({ name: ht.city });
   const cityList = h('datalist', { id: 'city-list' }, cities.map((c) => h('option', { value: c.name.replace(/\b\w/g, (x) => x.toUpperCase()) })));
 
   const intl = bind('is_international', h('input', { type: 'checkbox' }), 'change');
@@ -576,6 +695,17 @@ async function viewTrip(id) {
   if (canBook) {
     const ref = h('input', { placeholder: 'PNR / booking reference(s)' });
     const note = h('input', { placeholder: 'Optional note to traveller' });
+    const helper = segs
+      .map((sg, i) => [i, searchLinks(sg, trip.is_international)])
+      .filter(([, links]) => links.length);
+    if (helper.length) {
+      actions.push(h('div', { class: 'card' },
+        h('h2', {}, 'Find & book'),
+        h('p', { class: 'muted small' }, 'Pre-filled searches for each item in this itinerary.'),
+        helper.map(([i, links]) => h('div', { class: 'links', style: 'margin-bottom:8px' },
+          h('strong', { class: 'small' }, `${i + 1}. ${SEG_TYPES[segs[i].type]}: `),
+          links.map(([label, url]) => h('a', { class: 'chip', href: url, target: '_blank', rel: 'noopener noreferrer' }, label, ' ↗'))))));
+    }
     actions.push(h('div', { class: 'card' },
       h('h2', {}, 'Travel desk: mark as booked'),
       field('Booking reference', ref, null, true),
@@ -929,6 +1059,87 @@ async function viewAdminPolicy() {
         h('thead', {}, h('tr', {}, ['Band', 'Designations', 'Rail up to', 'Road up to', 'Own vehicle', 'Hotel A', 'Hotel B', 'Hotel C', 'Meals/day', ''].map((c) => h('th', {}, c)))),
         h('tbody', {}, bands.map(bandRow))))),
     cityCard
+  );
+}
+
+// ---------------------------------------------------------------- admin: preferred hotels
+async function viewAdminHotels() {
+  const [list, bands, cities] = await Promise.all([
+    call(sb.from('preferred_hotels').select('*').order('city').order('rate_per_night')),
+    call(sb.from('policies').select('grade, hotel_cap_a, hotel_cap_b, hotel_cap_c').not('rank', 'is', null).order('rank')),
+    call(sb.from('cities').select('name, category')),
+  ]);
+  const cityCat = Object.fromEntries(cities.map((c) => [c.name, c.category]));
+  const title = (s) => s.replace(/\b\w/g, (x) => x.toUpperCase());
+
+  // Which bands can stay at this rate without an exception.
+  const bandsWithin = (ht) => {
+    const col = `hotel_cap_${(cityCat[ht.city] || 'C').toLowerCase()}`;
+    const ok = bands.filter((b) => Number(ht.rate_per_night) <= Number(b[col])).map((b) => b.grade);
+    return ok.length ? (ok.length === bands.length ? 'All bands' : `${ok[0]} and above`) : 'Above every band cap';
+  };
+
+  const editor = (ht = {}) => {
+    const st = {
+      id: ht.id ?? '', city: ht.city ? title(ht.city) : '', name: ht.name ?? '', area: ht.area ?? '',
+      rate_per_night: ht.rate_per_night ?? '', includes_breakfast: ht.includes_breakfast ?? false,
+      contact: ht.contact ?? '', booking_url: ht.booking_url ?? '', notes: ht.notes ?? '', active: ht.active ?? true,
+    };
+    const inp = (k, attrs = {}) => h('input', { value: st[k], oninput: (e) => (st[k] = e.target.value), ...attrs });
+    const chk = (k) => h('input', { type: 'checkbox', checked: st[k], onchange: (e) => (st[k] = e.target.checked), style: 'width:auto' });
+    const dlg = h('dialog', {},
+      h('h2', {}, ht.id ? 'Edit preferred hotel' : 'Add preferred hotel'),
+      h('div', { class: 'row' },
+        field('City', inp('city', { list: 'hotel-city-list', placeholder: 'e.g. Mumbai' }), null, true),
+        field('Rate per night', inp('rate_per_night', { type: 'number', min: '0' }), 'Negotiated / corporate rate', true)),
+      field('Hotel name', inp('name'), null, true),
+      field('Area / address', inp('area', { placeholder: 'e.g. Andheri East, near airport' })),
+      h('div', { class: 'row' },
+        field('Contact (phone / email)', inp('contact')),
+        field('Website / booking link', inp('booking_url', { placeholder: 'https://…' }))),
+      field('Notes for travellers', inp('notes', { placeholder: 'Quote company code HSCV, free airport pickup…' })),
+      h('div', { class: 'actions field' },
+        h('label', { class: 'check' }, chk('includes_breakfast'), 'Breakfast included'),
+        h('label', { class: 'check' }, chk('active'), 'Active (shown to travellers)')),
+      h('div', { class: 'actions' },
+        h('button', { class: 'primary', onclick: async () => {
+          await call(sb.rpc('upsert_preferred_hotel', { p: { ...st, city: cityKey(st.city) } }));
+          dlg.close();
+          toast('Hotel saved');
+          router();
+        } }, 'Save'),
+        h('button', { onclick: () => dlg.close() }, 'Cancel')));
+    dlg.addEventListener('close', () => dlg.remove());
+    document.body.append(dlg);
+    dlg.showModal();
+  };
+
+  const byCity = {};
+  for (const ht of list) (byCity[ht.city] ||= []).push(ht);
+
+  mount(
+    h('datalist', { id: 'hotel-city-list' }, cities.map((c) => h('option', { value: title(c.name) }))),
+    h('div', { class: 'page-head' },
+      h('div', {}, h('h1', {}, 'Preferred hotels'),
+        h('div', { class: 'muted' }, 'Hotels with company rates. Travellers see these when they add a hotel stay in that city.')),
+      h('button', { class: 'primary', onclick: () => editor() }, '+ Add hotel')),
+    list.length
+      ? Object.entries(byCity).map(([city, rows]) =>
+          h('div', { class: 'card' },
+            h('h2', {}, title(city), h('span', { class: 'muted small' }, `  · category ${cityCat[city] || 'C'}`)),
+            h('div', { class: 'table-wrap' }, h('table', {},
+              h('thead', {}, h('tr', {}, ['Hotel', 'Rate / night', 'Within cap for', 'Contact', 'Status', ''].map((c) => h('th', {}, c)))),
+              h('tbody', {}, rows.map((ht) =>
+                h('tr', {},
+                  h('td', {}, h('strong', {}, ht.name), ht.area ? h('div', { class: 'muted small' }, ht.area) : null,
+                    ht.notes ? h('div', { class: 'muted small' }, ht.notes) : null),
+                  h('td', { class: 'nowrap' }, money(ht.rate_per_night), ht.includes_breakfast ? h('div', { class: 'muted small' }, 'with breakfast') : null),
+                  h('td', {}, bandsWithin(ht)),
+                  h('td', { class: 'small' }, ht.contact || '—',
+                    ht.booking_url ? h('div', {}, h('a', { href: ht.booking_url, target: '_blank', rel: 'noopener noreferrer' }, 'Website ↗')) : null),
+                  h('td', {}, ht.active ? h('span', { class: 'badge s-booked' }, 'Active') : h('span', { class: 'badge s-cancelled' }, 'Hidden')),
+                  h('td', {}, h('button', { onclick: () => editor(ht) }, 'Edit')))))))))
+      : h('div', { class: 'card empty' }, 'No preferred hotels yet. Add the hotels your company regularly uses, with their corporate rates.')
   );
 }
 

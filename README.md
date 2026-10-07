@@ -35,6 +35,21 @@ Company travel portal for **High Spirit Commercial Ventures Pvt Ltd**, built aro
 | 6.2 | Laundry ₹75/day from day 3 (shown as an entitlement) |
 | 7.1 | Meal cap per day by band (shown as an entitlement) |
 
+### Finding options (flights, trains, hotels)
+
+- Each itinerary item has **search links** pre-filled with the route and dates: Google Flights,
+  MakeMyTrip and Cleartrip for flights (airport codes for about 70 Indian cities are built in), IRCTC
+  and Google for trains, redBus for buses, Booking.com and Google Hotels for stays. Admin and HR see
+  the same links on an approved trip under **Find & book**. The link formats couldn't be checked from
+  the build server (these sites block automated requests), so click-test each one once from a normal
+  browser.
+- **Preferred hotels** (admin → *Preferred Hotels*): the travel desk lists hotels with corporate
+  rates per city. When an employee adds a hotel stay, the hotels in that city appear, marked
+  *Within your cap* or *Above your cap* for their band. *Use this hotel* fills in the name and
+  the total cost for the nights booked.
+- Live fares and in-app booking need a travel-supplier API (TBO, Tripjack, a corporate booking
+  platform, etc.). That is the next step once credentials are available.
+
 An itinerary that breaks a rule can still be submitted with a justification. The manager sees each
 exception spelled out before deciding.
 
@@ -79,6 +94,7 @@ Applied to the Supabase project `TravelDesk` (`jnlrvehlenrtbdqmgbbr`), in order:
 2. `20261007000100_policy_v5_tables.sql`: V5 settings, band entitlements L0–L10, city categories
 3. `20261007000200_policy_v5_functions.sql`: V5 policy engine and admin functions
 4. `20261007000300_friendly_labels.sql`: readable class names in policy messages
+5. `20261007000400_preferred_hotels.sql`: preferred hotels per city with corporate rates
 
 `supabase/manual/cleanup_legacy_policy.sql` is an **optional** one-off script. It removes the
 placeholder grades G1–G3 and their unused columns from the first migration. The app already
