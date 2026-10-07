@@ -425,6 +425,80 @@ async function router() {
 }
 
 // ---------------------------------------------------------------- login / sign up
+// Animated sky scene for the login page: dawn sky, stars, sun, drifting clouds, an airliner
+// with a contrail, and an Indian city skyline with twinkling windows. Static, trusted markup.
+function loginScene() {
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280);
+  const stars = Array.from({ length: 46 }, () =>
+    `<i class="star" style="left:${(rnd() * 100).toFixed(1)}%;top:${(rnd() * 46).toFixed(1)}%;animation-delay:${(rnd() * 4).toFixed(2)}s;--s:${(1 + rnd() * 2).toFixed(1)}px"></i>`).join('');
+  const cloudSvg = '<svg viewBox="0 0 220 90" aria-hidden="true"><path d="M38 84a30 30 0 0 1 4-60 42 42 0 0 1 78-10 34 34 0 0 1 58 20 26 26 0 0 1 8 50z"/></svg>';
+  const clouds = [
+    ['far', 3, 150, 0.2, 70, 0], ['far', 45, 110, 0.22, 90, -40], ['mid', 50, 220, 0.35, 48, -10],
+    ['mid', 63, 180, 0.32, 56, -30], ['near', 56, 320, 0.5, 34, -5], ['near', 70, 260, 0.45, 40, -24],
+  ].map(([layer, top, w, op, dur, delay]) =>
+    `<div class="sky-cloud ${layer}" style="top:${top}%;width:${w}px;opacity:${op};animation-duration:${dur}s;animation-delay:${delay}s">${cloudSvg}</div>`).join('');
+
+  // Far skyline: generated towers.
+  let x = 0;
+  let far = '';
+  while (x < 1200) {
+    const w = 26 + Math.floor(rnd() * 46);
+    const hgt = 50 + Math.floor(rnd() * 90);
+    far += `<rect x="${x}" y="${220 - hgt}" width="${w - 4}" height="${hgt}"/>`;
+    x += w;
+  }
+  // Near skyline: landmarks + towers, with lit windows.
+  const towers = [[0, 60, 120], [62, 44, 95], [108, 70, 150], [880, 56, 135], [940, 40, 100], [984, 74, 165], [1062, 50, 120], [1116, 84, 145]];
+  let wins = '';
+  for (const [tx, tw, th] of towers) {
+    for (let wy = 220 - th + 12; wy < 200; wy += 14) {
+      for (let wx = tx + 8; wx < tx + tw - 10; wx += 12) {
+        if (rnd() > 0.55) wins += `<rect class="win" x="${wx}" y="${wy}" width="5" height="6" style="animation-delay:${(rnd() * 6).toFixed(2)}s"/>`;
+      }
+    }
+  }
+  const near = towers.map(([tx, tw, th]) => `<rect x="${tx}" y="${220 - th}" width="${tw}" height="${th}"/>`).join('') + `
+    <!-- India Gate -->
+    <path d="M214 220V96h96v124h-28v-62a20 20 0 0 0-40 0v62z"/><rect x="208" y="84" width="108" height="14"/><rect x="226" y="72" width="72" height="13"/>
+    <!-- Taj Mahal -->
+    <rect x="368" y="196" width="216" height="24"/><rect x="420" y="132" width="112" height="66"/>
+    <path d="M436 134c0-46 80-46 80 0z"/><rect x="474" y="70" width="4" height="22"/><circle cx="476" cy="70" r="4"/>
+    <path d="M422 134c0-18 26-18 26 0zM504 134c0-18 26-18 26 0z"/>
+    <rect x="378" y="104" width="10" height="94"/><rect x="564" y="104" width="10" height="94"/>
+    <path d="M375 106c0-12 16-12 16 0zM561 106c0-12 16-12 16 0z"/>
+    <!-- Charminar -->
+    <rect x="660" y="146" width="112" height="74"/><path d="M688 220v-34a28 28 0 0 1 56 0v34z" class="cut"/>
+    <rect x="652" y="70" width="14" height="150"/><rect x="766" y="70" width="14" height="150"/>
+    <path d="M649 72c0-16 20-16 20 0zM763 72c0-16 20-16 20 0z"/><path d="M694 146c0-30 44-30 44 0z"/>
+    <!-- Gateway of India -->
+    <path d="M800 220v-92h64v92h-18v-46a14 14 0 0 0-28 0v46z"/><rect x="796" y="120" width="72" height="10"/>
+    <path d="M800 120c0-14 12-14 12 0zM852 120c0-14 12-14 12 0z"/>`;
+
+  const plane = `<svg viewBox="0 0 132 44" aria-hidden="true">
+      <path class="fin" d="M20 15 9 1h12l15 14z"/>
+      <path class="wing-far" d="M64 15 52 5h8l20 10z"/>
+      <path class="body" d="M10 23c0-6 8-8 20-8h68c11 0 21 4 26 8-5 4-15 7-26 7H30c-12 0-20-2-20-7z"/>
+      <path class="cockpit" d="M110 18c4 0 8 2 11 5h-11z"/>
+      <path class="stripe" d="M30 25h80c-3 2-7 3-12 3H30c-8 0-14-1-17-3z"/>
+      <path class="wing" d="M60 25 40 43h13l30-18z"/><ellipse class="engine" cx="62" cy="31" rx="9" ry="3.2"/>
+      ${Array.from({ length: 11 }, (_, i) => `<circle class="window" cx="${40 + i * 6}" cy="20" r="1.5"/>`).join('')}
+    </svg>`;
+
+  return `
+    <div class="sky-sun"></div>
+    <div class="sky-stars">${stars}</div>
+    ${clouds}
+    <div class="jet-track"><div class="jet"><span class="contrail"></span>${plane}</div></div>
+    <svg class="skyline far" viewBox="0 0 1200 220" preserveAspectRatio="xMidYMax slice" aria-hidden="true">${far}</svg>
+    <svg class="skyline near" viewBox="0 0 1200 220" preserveAspectRatio="xMidYMax slice" aria-hidden="true">${near}<g>${wins}</g></svg>
+    <a class="brand" href="#/login"><span class="logo">✈</span> TravelDesk</a>
+    <div class="scene-copy">
+      <h2>Business travel,<br><span class="rotator"><span>planned.</span><span>approved.</span><span>booked.</span></span></h2>
+      <p>Plan within policy, get one-click approvals, and let the travel desk book everything — in one place.</p>
+    </div>`;
+}
+
 function viewLogin() {
   let mode = 'signin';
   const name = h('input', { autocomplete: 'name', placeholder: 'Full name' });
@@ -495,28 +569,8 @@ function viewLogin() {
   );
   setMode('signin');
 
-  // Decorative route map: a dashed flight path with pulsing city pins and a plane flying along it.
-  const art = document.createElement('div');
-  art.innerHTML = `<svg class="route-art" viewBox="0 0 600 700" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
-    <path id="flight-path" class="path" d="M70 330 C 170 200, 290 340, 370 230 S 510 100, 540 70"/>
-    <circle class="pulse" cx="70" cy="330" r="6"/><circle class="pin" cx="70" cy="330" r="6"/>
-    <circle class="pulse" cx="370" cy="230" r="5" style="animation-delay:.8s"/><circle class="pin" cx="370" cy="230" r="5"/>
-    <circle class="pulse" cx="540" cy="70" r="6" style="animation-delay:1.6s"/><circle class="pin" cx="540" cy="70" r="6"/>
-    <path class="jet" d="M16 0 L10 -2 L3 -2 L-4 -11 L-8 -11 L-4 -2 L-11 -2 L-14 -6 L-17 -6 L-15 0 L-17 6 L-14 6 L-11 2 L-4 2 L-8 11 L-4 11 L3 2 L10 2 Z">
-      <animateMotion dur="7s" repeatCount="indefinite" rotate="auto"><mpath href="#flight-path"/></animateMotion>
-    </path>
-  </svg>`;
-  const visual = h('div', { class: 'auth-visual' },
-    art.firstChild,
-    h('div', { class: 'cloud c1' }), h('div', { class: 'cloud c2' }), h('div', { class: 'cloud c3' }),
-    h('div', { class: 'brand' }, h('span', { class: 'logo' }, '✈'), ' TravelDesk'),
-    h('div', {},
-      h('h2', {}, 'Business travel,', h('br'), 'planned right the first time.'),
-      h('p', {}, 'Plan itineraries within your band entitlement, get one-click approvals, and let the travel desk book everything in one place.'),
-      h('div', { class: 'features' },
-        h('div', {}, h('span', {}, '🛡️'), 'Live travel-policy check as you plan'),
-        h('div', {}, h('span', {}, '⚡'), 'Urgent trips go straight to your manager'),
-        h('div', {}, h('span', {}, '👥'), 'Book for your whole team in one request'))));
+  const visual = h('div', { class: 'auth-visual' });
+  visual.innerHTML = loginScene();
   mount(
     h('div', { class: 'auth-split' },
       visual,
