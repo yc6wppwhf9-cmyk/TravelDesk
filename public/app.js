@@ -39,6 +39,8 @@ const EVENT_LABEL = {
   approved: 'Approved',
   rejected: 'Rejected',
   booked: 'Booked by travel desk',
+  document_added: 'Ticket / document uploaded',
+  document_removed: 'Document removed',
   cancelled: 'Cancelled',
 };
 const ROLE_LABEL = { employee: 'Employee', manager: 'Manager', admin: 'Admin / Travel Desk' };
@@ -594,7 +596,11 @@ function viewLogin() {
 
 // ---------------------------------------------------------------- my trips
 async function viewMyTrips() {
-  const trips = await call(sb.from('trips_view').select('*').contains('traveller_ids', [ctx.user.id]).order('start_date', { ascending: false }));
+  const [trips, docRows] = await Promise.all([
+    call(sb.from('trips_view').select('*').contains('traveller_ids', [ctx.user.id]).order('start_date', { ascending: false })),
+    sb.from('trip_documents').select('trip_id').then((r) => r.data || []),
+  ]);
+  const withDocs = new Set(docRows.map((r) => r.trip_id));
   const today = new Date().toISOString().slice(0, 10);
   const upcoming = trips.filter((t) => ['pending_approval', 'approved', 'booked'].includes(t.status)).reverse();
   const past = trips.filter((t) => !upcoming.includes(t));
@@ -611,7 +617,7 @@ async function viewMyTrips() {
     const from = t.origin || '';
     const to = t.destination;
     return h('a', { class: 'trip-card', href: `#/trip/${t.id}`, 'data-status': t.status, style: `--d:${i}` },
-      h('div', { class: 'badges' }, tripBadges(t)),
+      h('div', { class: 'badges' }, tripBadges(t), withDocs.has(t.id) ? h('span', { class: 'badge s-booked' }, '🎫 Tickets ready') : null),
       h('div', { class: 'route' }, from ? [h('span', {}, from), h('span', { class: 'line' })] : null, h('span', {}, to)),
       h('div', { class: 'title' }, t.title),
       h('div', { class: 'meta' },
@@ -1075,6 +1081,100 @@ async function viewNewTrip() {
   );
 }
 
+// ---------------------------------------------------------------- tickets & documents
+const DOC_KINDS = { ticket: '🎫 Ticket', hotel: '🏨 Hotel voucher', visa: '🛂 Visa / permit', other: '📄 Other' };
+const DOC_TYPES = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'];
+const MAX_DOC_BYTES = 10 * 1024 * 1024;
+const fmtSize = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
+
+async function openDocument(doc, download = false) {
+  const { data, error } = await sb.storage.from('trip-docs').createSignedUrl(doc.path, 120, download ? { download: doc.file_name } : undefined);
+  if (error) return toast(error.message, true);
+  if (download) {
+    const a = h('a', { href: data.signedUrl, download: doc.file_name });
+    document.body.append(a);
+    a.click();
+    a.remove();
+  } else {
+    window.open(data.signedUrl, '_blank', 'noopener');
+  }
+}
+
+function documentsCard(trip, docs) {
+  const admin = isAdmin();
+  if (!docs.length && !admin) {
+    return trip.status === 'booked' || trip.status === 'approved'
+      ? h('div', { class: 'card' }, h('h2', {}, 'Tickets & documents'),
+          h('div', { class: 'empty', style: 'padding:18px' }, h('span', { class: 'big' }, '🎫'), 'Your tickets will appear here once the travel desk uploads them.'))
+      : null;
+  }
+
+  const list = h('div', { class: 'doc-list' }, docs.map((d, i) =>
+    h('div', { class: 'doc', style: `--d:${i}` },
+      h('div', { class: 'doc-icon' }, d.file_name.toLowerCase().endsWith('.pdf') ? 'PDF' : 'IMG'),
+      h('div', { class: 'doc-meta' },
+        h('strong', {}, d.file_name),
+        h('div', { class: 'muted small' }, `${DOC_KINDS[d.kind] || d.kind} · ${fmtSize(d.size_bytes)} · ${fmtDateTime(d.created_at)}${d.uploader?.full_name ? ' · ' + d.uploader.full_name : ''}`)),
+      h('div', { class: 'actions' },
+        h('button', { type: 'button', onclick: () => openDocument(d) }, 'View'),
+        h('button', { type: 'button', class: 'primary', onclick: () => openDocument(d, true) }, '⬇ Download'),
+        admin ? h('button', { type: 'button', class: 'danger', title: 'Remove', onclick: async () => {
+          if (!confirm(`Remove "${d.file_name}" from this trip?`)) return;
+          const path = await call(sb.rpc('remove_trip_document', { p_id: d.id }));
+          await sb.storage.from('trip-docs').remove([path]);
+          toast('Document removed');
+          router();
+        } }, '✕') : null))));
+
+  let upload = null;
+  if (admin) {
+    const kind = select(DOC_KINDS, trip.status === 'booked' || trip.status === 'approved' ? 'ticket' : 'other');
+    const input = h('input', { type: 'file', accept: '.pdf,image/png,image/jpeg,image/webp', multiple: true, hidden: true });
+    const status = h('div', { class: 'upload-status' });
+    const zone = h('label', { class: 'dropzone', tabindex: '0' },
+      h('span', { class: 'dz-icon' }, '⇪'),
+      h('strong', {}, 'Drop ticket PDFs here or click to browse'),
+      h('span', { class: 'muted small' }, 'PDF, PNG or JPG · up to 10 MB each · visible to every traveller on this trip'),
+      input);
+
+    const send = async (files) => {
+      for (const file of files) {
+        const row = h('div', { class: 'up-row' }, h('span', {}, file.name), h('span', { class: 'bar' }, h('i')));
+        status.append(row);
+        try {
+          if (!DOC_TYPES.includes(file.type)) throw new Error('Only PDF or image files are allowed');
+          if (file.size > MAX_DOC_BYTES) throw new Error('File is larger than 10 MB');
+          const safe = file.name.replace(/[^\w.\-]+/g, '_').slice(-80);
+          const path = `${trip.id}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${safe}`;
+          const { error } = await sb.storage.from('trip-docs').upload(path, file, { contentType: file.type, upsert: false });
+          if (error) throw error;
+          await call(sb.rpc('add_trip_document', { p_trip_id: trip.id, p_path: path, p_file_name: file.name, p_kind: kind.value, p_size: file.size }));
+          row.classList.add('done');
+        } catch (err) {
+          row.classList.add('failed');
+          row.append(h('span', { class: 'small' }, err.message || 'Upload failed'));
+          toast(`${file.name}: ${err.message || 'upload failed'}`, true);
+        }
+      }
+      if (status.querySelector('.done')) {
+        toast('Uploaded — travellers can download it now');
+        setTimeout(router, 700);
+      }
+    };
+    input.addEventListener('change', () => input.files.length && send([...input.files]));
+    zone.addEventListener('keydown', (e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), input.click()));
+    ['dragenter', 'dragover'].forEach((ev) => zone.addEventListener(ev, (e) => { e.preventDefault(); zone.classList.add('over'); }));
+    ['dragleave', 'drop'].forEach((ev) => zone.addEventListener(ev, (e) => { e.preventDefault(); zone.classList.remove('over'); }));
+    zone.addEventListener('drop', (e) => e.dataTransfer.files.length && send([...e.dataTransfer.files]));
+    upload = h('div', { class: 'upload' }, field('Document type', kind), zone, status);
+  }
+
+  return h('div', { class: 'card' },
+    h('h2', {}, 'Tickets & documents', docs.length ? h('span', { class: 'badge s-booked', style: 'margin-left:8px' }, `${docs.length}`) : null),
+    docs.length ? list : h('p', { class: 'muted small' }, 'No documents uploaded yet.'),
+    upload);
+}
+
 // ---------------------------------------------------------------- trip detail
 async function viewTrip(id) {
   const [trip, segs, events] = await Promise.all([
@@ -1083,6 +1183,7 @@ async function viewTrip(id) {
     call(sb.from('trip_events').select('*, actor:profiles(full_name)').eq('trip_id', id).order('id')),
   ]);
   if (!trip) return mount(h('div', { class: 'card empty' }, 'Trip not found or you do not have access.'));
+  const docs = await call(sb.from('trip_documents').select('*, uploader:profiles!trip_documents_uploaded_by_fkey(full_name)').eq('trip_id', id).order('created_at'));
 
   const canApprove = trip.status === 'pending_approval' && (await call(sb.rpc('can_approve_trip', { p_trip: id })));
   const mine = trip.user_id === ctx.user.id;
@@ -1121,6 +1222,7 @@ async function viewTrip(id) {
     }
     actions.push(h('div', { class: 'card' },
       h('h2', {}, 'Travel desk: mark as booked'),
+      h('p', { class: 'muted small' }, 'Upload the ticket PDFs under "Tickets & documents", then enter the PNR here.'),
       field('Booking reference', ref, null, true),
       field('Note', note),
       h('button', { class: 'primary', onclick: async () => {
@@ -1186,6 +1288,7 @@ async function viewTrip(id) {
             h('thead', {}, h('tr', {}, ['#', 'Type', 'Route / City', 'Dates', 'Class', 'Cost'].map((c, i) => h('th', { class: i === 5 ? 'right' : '' }, c)))),
             h('tbody', {}, segs.map(segRow)))))),
       h('div', {},
+        documentsCard(trip, docs),
         ...actions,
         h('div', { class: 'card' },
           h('h2', {}, 'Timeline'),

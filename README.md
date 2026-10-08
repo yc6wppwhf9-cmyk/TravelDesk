@@ -50,6 +50,15 @@ Company travel portal for **High Spirit Commercial Ventures Pvt Ltd**, built aro
 - Live fares and in-app booking need a travel-supplier API (TBO, Tripjack, a corporate booking
   platform, etc.). That is the next step once credentials are available.
 
+### Tickets & documents
+
+Admin/HR open a trip, choose the type (ticket, hotel voucher, visa, other), then drag the PDFs onto
+**Tickets & documents** or click to browse (PDF/PNG/JPG, up to 10 MB each). Every traveller on the
+trip and their manager can **View** or **Download** the files from the same page. My Trips shows a
+*🎫 Tickets ready* badge. Files sit in the private Supabase Storage bucket `trip-docs`. Downloads use
+short-lived signed links, and only people who can see the trip can open its files. Removing a file
+deletes it from storage and keeps an audit entry in the trip timeline.
+
 ### Group trips
 
 One person (the organiser) adds colleagues under **Who's travelling?** and submits a single request.
@@ -120,6 +129,7 @@ Applied to the Supabase project `TravelDesk` (`jnlrvehlenrtbdqmgbbr`), in order:
 6. `20261007000500_places_and_airports.sql`: town and airport coordinates
 7. `20261007000510_group_trips.sql`: co-travellers, trip origin, hotel rooms, visibility and approval rules
 8. `20261007000520_distance_and_group_policy.sql`: distance-based air eligibility, per-traveller policy checks
+9. `20261007000600_trip_documents.sql`: private `trip-docs` storage bucket and the ticket/voucher records
 
 `supabase/manual/cleanup_legacy_policy.sql` is an **optional** one-off script. It removes the
 placeholder grades G1–G3 and their unused columns from the first migration. The app already
