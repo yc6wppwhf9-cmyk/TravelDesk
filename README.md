@@ -1,4 +1,6 @@
-# TravelDesk
+# FieldYatra
+
+*Formerly TravelDesk. The repository and the Supabase project keep the old name.*
 
 **Live:** https://travel-desk-seven.vercel.app
 
@@ -100,8 +102,8 @@ approvals and row level security therefore behave exactly as in the real portal.
 - Travellers don't enter fares. They give the route, dates, a preferred time (and the train/flight
   number if they already know it), plus **passenger details for the ticket**: name as on ID,
   gender, age (date of birth for yourself, saved for next time), mobile, meal and berth preference.
-- **Add colleague** searches people on TravelDesk and prefills their name, gender and age.
-  Phone and date of birth stay private. **Add guest** covers anyone not on TravelDesk.
+- **Add colleague** searches people on FieldYatra and prefills their name, gender and age.
+  Phone and date of birth stay private. **Add guest** covers anyone not on FieldYatra.
 - When HR/admin mark a trip booked they enter the **amount paid**. That figure feeds *Booked spend*
   and the CSV export.
 

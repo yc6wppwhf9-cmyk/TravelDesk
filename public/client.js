@@ -14,7 +14,7 @@ async function connect() {
   }
   const status = document.createElement('div');
   status.className = 'demo-boot';
-  status.innerHTML = '<span class="logo">✈</span><strong>TravelDesk demo</strong><span class="muted"></span>';
+  status.innerHTML = '<span class="logo">✈</span><strong>FieldYatra demo</strong><span class="muted"></span>';
   document.getElementById('app').replaceChildren(status);
   const say = (m) => { status.querySelector('.muted').textContent = m; };
   try {

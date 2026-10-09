@@ -387,7 +387,7 @@ function renderNav(route) {
 }
 
 // ---------------------------------------------------------------- demo (/demo only)
-// Prospects try TravelDesk as a sample company. The backend runs in their browser (sandbox/client.js),
+// Prospects try FieldYatra as a sample company. The backend runs in their browser (sandbox/client.js),
 // so they can switch between the traveller, the manager and HR to walk through the whole flow.
 const initials = (name) => name.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 
@@ -418,7 +418,7 @@ function downloadSampleTicket() {
 const first = (key) => sb.profile.people.find((p) => p.key === key).name.split(' ')[0];
 const tourSteps = () => [
   { who: 'hero', go: '#/new', head: 'Plan a trip',
-    text: `Try Mumbai → Muzaffarpur: there is no airport, so TravelDesk offers Patna or Darbhanga. Add ${first('rep1')} as a fellow passenger. On a short route like Mumbai → Pune, flights are switched off.` },
+    text: `Try Mumbai → Muzaffarpur: there is no airport, so FieldYatra offers Patna or Darbhanga. Add ${first('rep1')} as a fellow passenger. On a short route like Mumbai → Pune, flights are switched off.` },
   { who: 'manager', go: '#/approvals', head: 'Approve as the manager',
     text: 'Urgent requests are on top and every policy exception is spelled out. A group trip is approved once for everyone.' },
   { who: 'hr', go: '#/admin', head: 'Book & upload tickets (HR)',
@@ -609,9 +609,9 @@ function loginScene() {
     <div class="jet-track"><div class="jet"><span class="contrail"></span>${plane}</div></div>
     <svg class="skyline far" viewBox="0 0 1200 220" preserveAspectRatio="xMidYMax slice" aria-hidden="true">${far}</svg>
     <svg class="skyline near" viewBox="0 0 1200 220" preserveAspectRatio="xMidYMax slice" aria-hidden="true">${near}<g>${wins}</g></svg>
-    <a class="brand" href="#/login"><span class="logo">✈</span> TravelDesk</a>
+    <a class="brand" href="#/login"><span class="logo">✈</span> FieldYatra</a>
     <div class="scene-copy">
-      <span class="eyebrow">Corporate Travel Desk</span>
+      <span class="eyebrow">Travel for field teams</span>
       <h2>Business travel,<br><span class="rotator"><span>planned.</span><span>approved.</span><span>booked.</span></span></h2>
       <p>Plan within policy, get one-click approvals, and let the travel desk book everything — in one place.</p>
     </div>`;
@@ -685,7 +685,7 @@ function viewLogin() {
     field('Password', pass, null, true),
     submit,
     note,
-    h('p', { class: 'muted small demo-link' }, 'New to TravelDesk? ', h('a', { href: '/demo' }, 'Try the demo →'))
+    h('p', { class: 'muted small demo-link' }, 'New to FieldYatra? ', h('a', { href: '/demo' }, 'Try the demo →'))
   );
   setMode('signin');
 
@@ -896,7 +896,7 @@ async function viewNewTrip() {
     try {
     const match = people.find((p) => colleagueLabel(p) === v) || people.find((p) => p.full_name.toLowerCase() === v.toLowerCase());
     if (!match) {
-      toast(`"${v}" isn't on TravelDesk yet — added as a guest passenger`);
+      toast(`"${v}" isn't on FieldYatra yet — added as a guest passenger`);
       state.passengers.push({ profile_id: null, full_name: v, gender: '', age: '', phone: '', meal_pref: '', berth_pref: '', label: 'Guest' });
     } else if (state.passengers.some((x) => x.profile_id === match.id)) {
       return toast(`${match.full_name} is already added`, true);
@@ -1260,7 +1260,7 @@ async function viewNewTrip() {
         colleagueInput, colleagueList,
         h('button', { type: 'button', onclick: addColleague }, '+ Add colleague'),
         h('button', { type: 'button', onclick: () => {
-          state.passengers.push({ profile_id: null, full_name: '', gender: '', age: '', phone: '', meal_pref: '', berth_pref: '', label: 'Not on TravelDesk' });
+          state.passengers.push({ profile_id: null, full_name: '', gender: '', age: '', phone: '', meal_pref: '', berth_pref: '', label: 'Not on FieldYatra' });
           syncTravellers();
         } }, '+ Add guest'))),
     h('div', { class: 'card' },

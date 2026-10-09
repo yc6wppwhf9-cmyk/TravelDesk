@@ -1,4 +1,4 @@
-// In-browser demo backend for /demo. Runs the real TravelDesk schema (supabase/migrations, bundled
+// In-browser demo backend for /demo. Runs the real FieldYatra schema (supabase/migrations, bundled
 // into schema.sql) in PGlite (Postgres in WebAssembly) and exposes the small slice of the
 // supabase-js API the app uses: from().select() queries, rpc(), auth and storage. Queries run as
 // the signed-in demo user with the same roles and row level security as production. Data lives

@@ -13,9 +13,9 @@ const BASE = {
   demo: {
     company: 'Sunrise Pharma Ltd',
     domain: 'sunrisepharma.demo',
-    title: 'Try TravelDesk',
+    title: 'Try FieldYatra',
     intro: 'No sign-up. Step into Sunrise Pharma Ltd, a sample company, and switch roles any time.',
-    footer: 'Sunrise Pharma Ltd is a fictional company · TravelDesk demo',
+    footer: 'Sunrise Pharma Ltd is a fictional company · FieldYatra demo',
     people: {
       hr: person('Neha Kapoor', 'HR & Travel Desk', 'L5', 'admin', 'Human Resources', null, null),
       zonal: person('Vikram Rao', 'Zonal Sales Head', 'L7', 'manager', 'Sales', null, null),
@@ -84,7 +84,7 @@ const BASE = {
   indoco: {
     company: 'Indoco Remedies Ltd',
     domain: 'indoco.demo',
-    title: 'TravelDesk for Indoco Remedies',
+    title: 'FieldYatra for Indoco Remedies',
     intro: 'A demo prepared for Indoco’s field force: medical reps plan trips, managers approve, Corporate HR books. No sign-up.',
     footer: 'Prepared for Indoco Remedies Ltd · people and trips are sample data, not Indoco records',
     people: {
@@ -253,7 +253,7 @@ function prospect({ company, short, industry, region }) {
   return {
     company,
     domain: `${short.toLowerCase().replace(/[^a-z0-9]/g, '')}.demo`,
-    title: `TravelDesk for ${short}`,
+    title: `FieldYatra for ${short}`,
     intro: `A demo prepared for ${short}’s ${ind.team}: ${ind.heroes} plan trips, managers approve, HR books. No sign-up.`,
     footer: `Prepared for ${company} · people and trips are sample data, not ${short} records`,
     people: {
