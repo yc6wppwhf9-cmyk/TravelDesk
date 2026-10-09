@@ -13,6 +13,37 @@ Company travel portal for **High Spirit Commercial Ventures Pvt Ltd**, built aro
   booked with the PNR or booking reference, manage people (band, role, manager) and edit the
   policy rules.
 
+**Demo for prospects:** https://travel-desk-seven.vercel.app/demo
+
+## Demo sandbox (`/demo`)
+
+Prospects can try the whole flow without signing up. They step into **Sunrise Pharma Ltd**, a
+fictional company with 7 people and sample trips (one urgent trip waiting for approval, a group trip
+waiting to be booked, booked trips with ticket PDFs, and a rejected out-of-policy flight). They
+can switch between three people:
+
+| Person | Role | What they try |
+| --- | --- | --- |
+| Priya Sharma | Area Sales Executive (L2) | Plan a trip within policy, nearest airports, add colleagues |
+| Arjun Mehta | Regional Sales Manager | Approve or reject, urgent trips first |
+| Neha Kapoor | HR & Travel Desk (admin) | All bookings, upload ticket PDFs, mark booked, edit policy |
+
+The **Demo guide** panel walks through the four steps and offers a sample ticket PDF to upload.
+
+How it works: the page loads the same SQL as production (`supabase/migrations`) into
+[PGlite](https://pglite.dev), which is Postgres compiled to WebAssembly, inside the visitor's browser.
+`public/sandbox/client.js` provides the parts of the supabase-js API the app uses. Policy checks,
+approvals and row level security therefore behave exactly as in the real portal.
+
+- Each visitor gets their own copy, saved in their browser. Nothing reaches your Supabase project,
+  and visitors never see each other's data.
+- **Reset demo** starts over with fresh sample data. Sample dates are set relative to the day the
+  demo is first opened.
+- The first visit downloads the database engine (a few MB) and takes about 10 seconds. Later
+  visits open in under 2 seconds.
+- `scripts/build-demo.js` bundles the migrations into `public/sandbox/schema.sql`. It runs on
+  `npm start` and as the Vercel build command, so the demo always matches the latest migrations.
+
 ## How it works
 
 | Layer | What |

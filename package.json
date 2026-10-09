@@ -7,7 +7,9 @@
     "node": ">=18"
   },
   "scripts": {
-    "start": "node server.js"
+    "prestart": "node scripts/build-demo.js",
+    "start": "node server.js",
+    "build": "node scripts/build-demo.js"
   },
   "dependencies": {
     "express": "^5.1.0"

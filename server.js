@@ -10,6 +10,9 @@ const app = express();
 const dir = path.join(__dirname, 'public');
 const port = Number(process.env.PORT) || 3000;
 
+// /demo is the in-browser sandbox for prospects (same page, demo backend). Keep it slash-free so
+// relative asset URLs resolve from the site root.
+app.use((req, res, next) => (req.path === '/demo/' ? res.redirect(301, '/demo') : next()));
 app.use(express.static(dir));
 app.get('/{*splat}', (_req, res) => res.sendFile(path.join(dir, 'index.html')));
 

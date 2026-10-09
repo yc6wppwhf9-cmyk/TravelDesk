@@ -643,3 +643,85 @@ dialog::backdrop { background: rgba(11, 16, 32, 0.5); backdrop-filter: blur(3px)
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
 }
+
+/* =====================================================================
+   Demo sandbox (/demo)
+   ===================================================================== */
+.demo-boot {
+  display: grid; justify-items: center; gap: 12px; padding: 22vh 16px; text-align: center;
+}
+.demo-boot .logo { width: 52px; height: 52px; font-size: 1.5rem; animation: float 2.4s ease-in-out infinite; }
+.demo-boot strong { font-size: 1.2rem; }
+@keyframes float { 50% { transform: translateY(-8px) rotate(-6deg); } }
+
+.card.glass .demo-link, .demo-link { margin: 16px 0 0; text-align: center; }
+.card.glass .demo-link a { color: #f7c58e; font-weight: 700; }
+
+.persona-list { display: grid; gap: 10px; padding: 18px; }
+.persona {
+  display: flex; align-items: center; gap: 14px; width: 100%; padding: 14px 16px; text-align: left; justify-content: flex-start;
+  color: #fff; background: rgba(5, 8, 22, 0.28); border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 16px;
+}
+.persona:hover { background: rgba(255, 255, 255, 0.12); border-color: #f7c58e; box-shadow: 0 16px 34px -18px rgba(240, 163, 122, 0.9); }
+.persona .avatar {
+  flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%;
+  background: linear-gradient(120deg, #fbe3b5, #f0a37a); color: #1a1235; font-weight: 800;
+}
+.persona-text { display: grid; gap: 2px; min-width: 0; }
+.persona-role { font-size: 0.8rem; font-weight: 600; color: #f7c58e; }
+.persona-does { font-size: 0.8rem; font-weight: 500; color: rgba(255, 255, 255, 0.65); }
+.persona-go { margin-left: auto; font-size: 1.2rem; transition: transform 0.3s var(--spring); }
+.persona:hover .persona-go { transform: translateX(4px); }
+
+.badge.demo { background: var(--warn-soft); color: var(--warn); }
+.demo-chip {
+  display: grid; gap: 6px; padding: 12px; margin-bottom: 10px; border-radius: 14px;
+  border: 1.5px dashed color-mix(in srgb, var(--warn) 45%, var(--line)); background: var(--panel-2);
+}
+.demo-chip-head { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 0.85rem; }
+.demo-chip label { margin: 0; }
+.demo-chip select { width: 100%; padding: 8px 10px; font-size: 0.85rem; }
+
+.demo-tour {
+  position: fixed; z-index: 40; right: 20px; bottom: 20px; width: min(320px, calc(100vw - 32px));
+  animation: glass-in 0.6s var(--ease) both;
+}
+.demo-tour-body {
+  max-height: calc(100vh - 40px); overflow: auto; padding: 16px 18px; border-radius: 18px;
+  background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow-lg);
+}
+.demo-tour-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 8px; }
+.demo-tour ol { list-style: none; counter-reset: step; margin: 0; padding: 0; display: grid; gap: 8px; }
+.demo-tour li {
+  counter-increment: step; position: relative; padding: 10px 12px 10px 44px; border-radius: 12px; border: 1px solid var(--line);
+  transition: border-color 0.2s, background 0.2s;
+}
+.demo-tour li::before {
+  content: counter(step); position: absolute; left: 12px; top: 10px; display: grid; place-items: center;
+  width: 22px; height: 22px; border-radius: 50%; background: var(--brand-soft); color: var(--brand); font-weight: 800; font-size: 0.75rem;
+}
+.demo-tour li:not(.here) .step-text { display: none; }
+.demo-tour li.here { border-color: color-mix(in srgb, var(--brand) 45%, var(--line)); background: var(--brand-soft); }
+.demo-tour li.here::before { background: var(--grad); color: #fff; }
+.step-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.step-actions button { padding: 6px 12px; font-size: 0.8rem; }
+.mini-avatar {
+  display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25); font-size: 0.62rem; font-weight: 800;
+}
+.step-actions button:not(.primary) .mini-avatar { background: var(--brand-soft); color: var(--brand); }
+.demo-tour-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.demo-tour-foot button { padding: 6px 12px; font-size: 0.8rem; }
+.demo-tour-pill { display: none; margin-left: auto; box-shadow: var(--shadow-lg); border-radius: 999px; }
+.demo-tour.closed { width: auto; }
+.demo-tour.closed .demo-tour-body { display: none; }
+.demo-tour.closed .demo-tour-pill { display: inline-flex; }
+body.auth-page .demo-tour { display: none; }
+@media (min-width: 1640px) {
+  body.has-shell.tour-open main { padding-right: 372px; }
+}
+@media (max-width: 960px) {
+  .demo-chip { display: none; }
+  .demo-tour { right: 16px; bottom: 16px; }
+  .demo-tour-body { max-height: 60vh; }
+}
