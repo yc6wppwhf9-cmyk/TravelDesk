@@ -1,7 +1,10 @@
 // Picks the backend: the real Supabase project, or the in-browser demo sandbox at /demo.
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from './config.js';
 
-export const DEMO = /^\/demo\/?$/.test(location.pathname);
+// Demo URLs and the sample company each one loads (public/sandbox/companies.js).
+const DEMO_PATHS = { '/demo': 'sunrise', '/indoco': 'indoco' };
+const demoSlug = DEMO_PATHS[location.pathname.replace(/\/+$/, '')] || null;
+export const DEMO = Boolean(demoSlug);
 
 async function connect() {
   if (!DEMO) {
@@ -15,7 +18,7 @@ async function connect() {
   const say = (m) => { status.querySelector('.muted').textContent = m; };
   try {
     const demo = await import('./sandbox/client.js');
-    const sb = await demo.createDemoClient(say);
+    const sb = await demo.createDemoClient(demoSlug, say);
     return { sb, demo };
   } catch (err) {
     say(`Couldn't start the demo: ${err.message || err}. Please use a recent Chrome, Edge, Firefox or Safari.`);

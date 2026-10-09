@@ -392,7 +392,7 @@ function renderNav(route) {
 const initials = (name) => name.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 
 async function switchPersona(key, hash, foldGuide = false) {
-  const p = demo.PERSONAS.find((x) => x.key === key);
+  const p = sb.profile.people.find((x) => x.key === key);
   // Steps started from the guide fold it away so it doesn't cover the page; the pill reopens it.
   if (foldGuide) try { localStorage.setItem('td-demo-tour', 'closed'); } catch { /* private mode */ }
   await call(sb.auth.signInWithPassword({ email: p.email, password: 'demo' }));
@@ -414,27 +414,30 @@ function downloadSampleTicket() {
   a.remove();
 }
 
-const TOUR = [
-  { who: 'priya', go: '#/new', head: 'Plan a trip',
-    text: 'Try Mumbai → Muzaffarpur: there is no airport, so TravelDesk offers Patna or Darbhanga. Add Rahul as a fellow passenger. On a short route like Mumbai → Pune, flights are switched off.' },
-  { who: 'arjun', go: '#/approvals', head: 'Approve as the manager',
+// Guide steps, by role key (see sandbox/companies.js); texts use the company's own names.
+const first = (key) => sb.profile.people.find((p) => p.key === key).name.split(' ')[0];
+const tourSteps = () => [
+  { who: 'hero', go: '#/new', head: 'Plan a trip',
+    text: `Try Mumbai → Muzaffarpur: there is no airport, so TravelDesk offers Patna or Darbhanga. Add ${first('rep1')} as a fellow passenger. On a short route like Mumbai → Pune, flights are switched off.` },
+  { who: 'manager', go: '#/approvals', head: 'Approve as the manager',
     text: 'Urgent requests are on top and every policy exception is spelled out. A group trip is approved once for everyone.' },
-  { who: 'neha', go: '#/admin', head: 'Book & upload tickets (HR)',
+  { who: 'hr', go: '#/admin', head: 'Book & upload tickets (HR)',
     text: 'Every booking in one place. Open an approved trip, use the Find & book links, upload the ticket PDF and mark it booked.', sample: true },
-  { who: 'priya', go: '#/trips', head: 'Traveller gets the tickets',
-    text: 'My Trips shows “Tickets ready”. Priya can view or download them from the trip.' },
+  { who: 'hero', go: '#/trips', head: 'Traveller gets the tickets',
+    text: `My Trips shows “Tickets ready”. ${first('hero')} can view or download them from the trip.` },
 ];
+const PERSONA_HOME = { hero: '#/new', manager: '#/approvals', hr: '#/admin' };
 
 function renderDemoChrome() {
-  const me = demo.PERSONAS.find((p) => p.email === ctx.profile.email);
+  const me = sb.profile.people.find((p) => p.email === ctx.profile.email);
   let chip = document.getElementById('demo-chip');
   if (!chip) {
     chip = h('div', { id: 'demo-chip', class: 'demo-chip' });
     document.querySelector('.topbar .me').before(chip);
   }
   const pick = h('select', { 'aria-label': 'View the demo as', onchange: (e) => switchPersona(e.target.value, '#/trips', true) },
-    demo.PERSONAS.map((p) => h('option', { value: p.key, selected: p.key === me?.key }, `${p.name} · ${p.title}`)));
-  chip.replaceChildren(h('div', { class: 'demo-chip-head' }, h('span', { class: 'badge demo' }, 'Demo'), h('span', {}, demo.COMPANY)),
+    sb.profile.people.map((p) => h('option', { value: p.key, selected: p.key === me?.key }, `${p.name} · ${p.title}`)));
+  chip.replaceChildren(h('div', { class: 'demo-chip-head' }, h('span', { class: 'badge demo' }, 'Demo'), h('span', {}, sb.profile.company)),
     h('label', { class: 'small muted' }, 'Viewing as'), pick);
 
   let tour = document.getElementById('demo-tour');
@@ -444,7 +447,7 @@ function renderDemoChrome() {
   }
   let saved = null;
   try { saved = localStorage.getItem('td-demo-tour'); } catch { /* private mode */ }
-  tour.classList.toggle('closed', saved ? saved === 'closed' : innerWidth < 700); // phones start folded
+  tour.classList.toggle('closed', saved ? saved === 'closed' : innerWidth < 1640); // opens by itself only where it has room beside the page
   document.body.classList.toggle('tour-open', !tour.classList.contains('closed'));
   const setOpen = (open) => {
     tour.classList.toggle('closed', !open);
@@ -457,8 +460,8 @@ function renderDemoChrome() {
       h('div', { class: 'demo-tour-head' },
         h('div', {}, h('strong', {}, 'Try the full flow'), h('div', { class: 'muted small' }, 'Switch people with one click')),
         h('button', { class: 'link', 'aria-label': 'Hide guide', onclick: () => setOpen(false) }, '✕')),
-      h('ol', {}, TOUR.map((st) => {
-        const p = demo.PERSONAS.find((x) => x.key === st.who);
+      h('ol', {}, tourSteps().map((st) => {
+        const p = sb.profile.people.find((x) => x.key === st.who);
         const here = p.key === me?.key;
         return h('li', { class: here ? 'here' : '' },
           h('div', { class: 'step-head' }, h('strong', {}, st.head)),
@@ -468,7 +471,7 @@ function renderDemoChrome() {
               h('span', { class: 'mini-avatar' }, initials(p.name)), here ? `Go (you are ${p.name.split(' ')[0]})` : `Be ${p.name.split(' ')[0]} →`),
             st.sample ? h('button', { class: 'small', onclick: downloadSampleTicket }, 'Sample ticket PDF ↓') : null));
       })),
-      h('p', { class: 'small muted' }, 'Also try, as Neha: Travel Policy, People, Preferred Hotels and the CSV export.'),
+      h('p', { class: 'small muted' }, `Also try, as ${first('hr')}: Travel Policy, People, Preferred Hotels and the CSV export.`),
       h('div', { class: 'demo-tour-foot' },
         h('span', { class: 'small muted' }, 'Data stays in your browser.'),
         h('button', { class: 'small', onclick: () => { if (confirm('Start the demo over with fresh sample data?')) sb.reset(); } }, 'Reset demo'))));
@@ -477,22 +480,22 @@ function renderDemoChrome() {
 function viewDemoLogin() {
   const visual = h('div', { class: 'auth-visual' });
   visual.innerHTML = loginScene();
-  const people = ['priya', 'arjun', 'neha'].map((k) => demo.PERSONAS.find((p) => p.key === k));
+  const people = ['hero', 'manager', 'hr'].map((k) => sb.profile.people.find((p) => p.key === k));
   const page = h('div', { class: 'auth-full' },
     visual,
     h('div', { class: 'auth-panel' },
       h('div', { class: 'auth' },
-        h('h1', {}, 'Try TravelDesk'),
-        h('p', { class: 'muted', style: 'margin:0 0 22px' }, `No sign-up. Step into ${demo.COMPANY}, a sample company, and switch roles any time.`),
+        h('h1', {}, sb.profile.title),
+        h('p', { class: 'muted', style: 'margin:0 0 22px' }, sb.profile.intro),
         h('div', { class: 'card glass persona-list' },
           people.map((p) =>
-            h('button', { type: 'button', class: 'persona', onclick: () => switchPersona(p.key, p.key === 'priya' ? '#/new' : p.key === 'arjun' ? '#/approvals' : '#/admin') },
+            h('button', { type: 'button', class: 'persona', onclick: () => switchPersona(p.key, PERSONA_HOME[p.key]) },
               h('span', { class: 'avatar' }, initials(p.name)),
               h('span', { class: 'persona-text' },
                 h('strong', {}, p.name), h('span', { class: 'persona-role' }, `${p.title} · ${p.grade}`), h('span', { class: 'persona-does' }, p.does)),
               h('span', { class: 'persona-go', 'aria-hidden': 'true' }, '→'))),
           h('p', { class: 'muted small', style: 'margin:14px 0 0' }, 'Everything runs in your browser. Nothing you enter is sent anywhere.')))),
-    h('div', { class: 'auth-foot' }, `${demo.COMPANY} is a fictional company · TravelDesk demo`));
+    h('div', { class: 'auth-foot' }, sb.profile.footer));
   mount(page);
 }
 

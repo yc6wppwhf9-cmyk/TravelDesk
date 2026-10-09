@@ -28,11 +28,20 @@
       "source": "/demo/",
       "destination": "/demo",
       "permanent": true
+    },
+    {
+      "source": "/indoco/",
+      "destination": "/indoco",
+      "permanent": true
     }
   ],
   "rewrites": [
     {
       "source": "/demo",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/indoco",
       "destination": "/index.html"
     }
   ]

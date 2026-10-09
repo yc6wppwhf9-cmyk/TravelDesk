@@ -14,6 +14,7 @@ Company travel portal for **High Spirit Commercial Ventures Pvt Ltd**, built aro
   policy rules.
 
 **Demo for prospects:** https://travel-desk-seven.vercel.app/demo
+**Indoco Remedies demo:** https://travel-desk-seven.vercel.app/indoco
 
 ## Demo sandbox (`/demo`)
 
@@ -29,6 +30,16 @@ can switch between three people:
 | Neha Kapoor | HR & Travel Desk (admin) | All bookings, upload ticket PDFs, mark booked, edit policy |
 
 The **Demo guide** panel walks through the four steps and offers a sample ticket PDF to upload.
+
+**Company-specific demos.** `public/sandbox/companies.js` holds each sample company: its name,
+people, preferred hotels and five sample trips. `/indoco` loads a version prepared for Indoco
+Remedies (medical reps, a Regional Manager and Corporate HR, with Maharashtra field trips).
+Its people and trips are fictional. To add a demo for another prospect:
+
+1. Copy the `indoco` entry in `companies.js`, give it a new key, and change the names, cities and hotels.
+2. Map a URL to that key in `DEMO_PATHS` in `public/client.js`.
+3. Add the same path to `rewrites` (and the trailing-slash form to `redirects`) in `vercel.json`,
+   and to the redirect list in `server.js`.
 
 How it works: the page loads the same SQL as production (`supabase/migrations`) into
 [PGlite](https://pglite.dev), which is Postgres compiled to WebAssembly, inside the visitor's browser.

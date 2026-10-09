@@ -4,25 +4,23 @@
 // the signed-in demo user with the same roles and row level security as production. Data lives
 // only in this browser (IndexedDB), and "Reset demo" starts over with fresh sample data.
 
+import { COMPANIES } from './companies.js';
+
 const PGLITE = 'https://cdn.jsdelivr.net/npm/@electric-sql/pglite@0.5.8/dist/index.js';
-const SESSION_KEY = 'td-demo-user';
-const DOMAIN = 'sunrisepharma.demo';
 
-export const COMPANY = 'Sunrise Pharma Ltd';
+const DOES = {
+  hr: 'Sees every booking, books tickets, uploads PDFs, edits the travel policy',
+  manager: 'Approves the team’s trips, urgent ones first',
+  hero: 'Plans trips within policy, adds colleagues, gets tickets',
+};
 
-// The people prospects can sign in as. `pick` = shown on the demo sign-in screen.
-export const PERSONAS = [
-  { key: 'neha', name: 'Neha Kapoor', title: 'HR & Travel Desk', grade: 'L5', role: 'admin', dept: 'Human Resources', pick: true,
-    does: 'Sees every booking, books tickets, uploads PDFs, edits the travel policy' },
-  { key: 'vikram', name: 'Vikram Rao', title: 'Zonal Sales Head', grade: 'L7', role: 'manager', dept: 'Sales' },
-  { key: 'arjun', name: 'Arjun Mehta', title: 'Regional Sales Manager', grade: 'L6', role: 'manager', dept: 'Sales', manager: 'vikram', pick: true,
-    does: 'Approves his team’s trips, urgent ones first' },
-  { key: 'priya', name: 'Priya Sharma', title: 'Area Sales Executive', grade: 'L2', role: 'employee', dept: 'Sales', manager: 'arjun', pick: true,
-    does: 'Plans trips within policy, adds colleagues, gets tickets' },
-  { key: 'rahul', name: 'Rahul Verma', title: 'Medical Representative', grade: 'L1', role: 'employee', dept: 'Sales', manager: 'arjun' },
-  { key: 'kavita', name: 'Kavita Iyer', title: 'Medical Representative', grade: 'L1', role: 'employee', dept: 'Sales', manager: 'arjun' },
-  { key: 'sameer', name: 'Sameer Khan', title: 'Product Manager', grade: 'L4', role: 'employee', dept: 'Marketing', manager: 'vikram' },
-].map((p) => ({ ...p, email: `${p.key}@${DOMAIN}` }));
+/** The sample company for a demo URL: its people (with e-mail logins) and texts. */
+function companyProfile(slug) {
+  const c = COMPANIES[slug];
+  if (!c) throw new Error(`Unknown demo company: ${slug}`);
+  const people = Object.entries(c.people).map(([key, p]) => ({ key, ...p, email: `${key}@${c.domain}`, pick: key in DOES, does: DOES[key] || '' }));
+  return { slug, ...c, people };
+}
 
 const ident = (s) => {
   if (!/^[a-z_][a-z0-9_]*$/.test(s)) throw new Error(`Unsupported identifier: ${s}`);
@@ -82,15 +80,17 @@ class Query {
 
 // ---------------------------------------------------------------- the client
 class DemoClient {
-  constructor(db, dbName) {
+  constructor(db, dbName, profile) {
     this.db = db;
     this.dbName = dbName;
+    this.profile = profile;
+    this.sessionKey = `td-demo-user-${profile.slug}`;
     this.listeners = [];
     this.fkCache = {};
     this.fnCache = {};
     this.urls = {};
     let saved = null;
-    try { saved = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); } catch { /* private mode */ }
+    try { saved = JSON.parse(localStorage.getItem(this.sessionKey) || 'null'); } catch { /* private mode */ }
     this.session = saved?.user?.id ? saved : null;
 
     this.auth = {
@@ -119,8 +119,8 @@ class DemoClient {
   setSession(session, event) {
     this.session = session;
     try {
-      if (session) localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-      else localStorage.removeItem(SESSION_KEY);
+      if (session) localStorage.setItem(this.sessionKey, JSON.stringify(session));
+      else localStorage.removeItem(this.sessionKey);
     } catch { /* private mode */ }
     for (const cb of this.listeners) cb(event, session);
   }
@@ -299,17 +299,13 @@ class DemoClient {
 
   /** Wipe this browser's demo database and start over with fresh sample data. */
   async reset() {
-    try { localStorage.removeItem(SESSION_KEY); } catch { /* private mode */ }
+    try { localStorage.removeItem(this.sessionKey); } catch { /* private mode */ }
     try { await this.db.close(); } catch { /* already closed */ }
     await new Promise((done) => {
       const req = indexedDB.deleteDatabase(`/pglite/${this.dbName}`);
       req.onsuccess = req.onerror = req.onblocked = () => done();
     });
     location.reload();
-  }
-
-  personaFor(userId) {
-    return this.personaIds ? PERSONAS.find((p) => this.personaIds[p.key] === userId) || null : null;
   }
 }
 
@@ -352,42 +348,31 @@ const seg = (type, from_loc, to_loc, start_date, extra = {}) => ({
 });
 
 async function seed(client) {
-  const db = client.db;
+  const { db, profile } = client;
   const today = todayIST();
   const d = (n) => plusDays(today, n);
 
-  await db.exec(`update public.settings set company_name = '${COMPANY}'`);
+  await db.query('update public.settings set company_name = $1', [profile.company]);
   const ids = {};
-  for (const p of PERSONAS) {
+  for (const p of profile.people) {
     const r = await db.query('insert into auth.users (email, raw_user_meta_data) values ($1, $2) returning id', [p.email, JSON.stringify({ full_name: p.name })]);
     ids[p.key] = r.rows[0].id;
   }
-  for (const p of PERSONAS) {
+  const byKey = Object.fromEntries(profile.people.map((p) => [p.key, p]));
+  for (const p of profile.people) {
     await db.query('update public.profiles set full_name = $2, role = $3::public.app_role, grade = $4, department = $5, manager_id = $6 where id = $1',
       [ids[p.key], p.name, p.role, p.grade, p.dept, p.manager ? ids[p.manager] : null]);
+    if (p.details) {
+      const [gender, dob, phone, meal, berth] = p.details;
+      await db.query('insert into public.person_details (id, id_name, gender, date_of_birth, phone, meal_pref, berth_pref) values ($1,$2,$3,$4,$5,$6,$7)',
+        [ids[p.key], p.name, gender, dob, phone, meal, berth]);
+    }
   }
-  await db.query(`update public.settings set allowed_email_domain = $1`, [DOMAIN]);
-  const details = {
-    priya: ['Priya Sharma', 'female', '1996-04-12', '98200 11223', 'Vegetarian', 'Lower'],
-    rahul: ['Rahul Verma', 'male', '1998-09-03', '98200 44556', 'Non-vegetarian', 'Upper'],
-    kavita: ['Kavita Iyer', 'female', '1997-01-21', '98200 77889', 'Vegetarian', 'Lower'],
-    arjun: ['Arjun Mehta', 'male', '1988-06-30', '98200 99001', 'Non-vegetarian', 'Lower'],
-    sameer: ['Sameer Khan', 'male', '1991-11-08', '98200 33445', 'Non-vegetarian', 'Side lower'],
-  };
-  for (const [k, [id_name, gender, dob, phone, meal, berth]] of Object.entries(details)) {
-    await db.query('insert into public.person_details (id, id_name, gender, date_of_birth, phone, meal_pref, berth_pref) values ($1,$2,$3,$4,$5,$6,$7)',
-      [ids[k], id_name, gender, dob, phone, meal, berth]);
+  await db.query('update public.settings set allowed_email_domain = $1', [profile.domain]);
+  for (const [city, name, area, rate, breakfast, notes] of profile.hotels) {
+    await db.query('insert into public.preferred_hotels (city, name, area, rate_per_night, includes_breakfast, notes) values ($1,$2,$3,$4,$5,$6)',
+      [city, name, area, rate, breakfast, notes]);
   }
-  await db.exec(`insert into public.preferred_hotels (city, name, area, rate_per_night, includes_breakfast, contact, notes) values
-    ('mumbai', 'Hotel Sahara Star Business', 'Vile Parle East, near airport', 2400, true, 'corporate@sahara.example', 'Corporate code SUNRISE'),
-    ('mumbai', 'Ginger Andheri', 'Andheri East (MIDC)', 1900, false, '', ''),
-    ('delhi', 'Lemon Tree Premier', 'Aerocity', 2450, true, '', 'Airport shuttle included'),
-    ('delhi', 'Treebo Trend Paharganj', 'Near New Delhi station', 1450, false, '', ''),
-    ('ahmedabad', 'Fortune Park', 'Ashram Road', 1950, true, '', ''),
-    ('nagpur', 'Hotel Centre Point', 'Ramdaspeth', 1400, true, '', 'Close to medical college'),
-    ('patna', 'Hotel Maurya', 'Gandhi Maidan', 1950, true, '', ''),
-    ('pune', 'Ibis Viman Nagar', 'Viman Nagar', 1850, true, '', ''),
-    ('lucknow', 'Hotel Clarks Avadh', 'Mahatma Gandhi Marg', 1750, true, '', '')`);
   client.personaIds = ids;
 
   const as = (key) => ({
@@ -403,93 +388,50 @@ async function seed(client) {
       }
     },
   });
-  const pax = (key, extra = {}) => {
-    const [full_name, gender, dob, phone, meal_pref, berth_pref] = details[key];
-    return { profile_id: ids[key], full_name, gender, age: new Date().getFullYear() - Number(dob.slice(0, 4)), phone, meal_pref, berth_pref, ...extra };
-  };
-  const ticket = async (tripId, file, kind, lines) => {
-    const path = `${tripId}/seed-${file}`;
-    const bytes = makePdf(lines);
-    await db.query('insert into storage.objects (bucket_id, name, metadata) values ($1, $2, $3)', ['trip-docs', path, JSON.stringify({ mimetype: 'application/pdf' })]);
-    await db.query('insert into demo.files (bucket_id, name, mime, data) values ($1, $2, $3, $4)', ['trip-docs', path, 'application/pdf', bytes]);
-    await as('neha').rpc('add_trip_document', { p_trip_id: tripId, p_path: path, p_file_name: file, p_kind: kind, p_size: bytes.length });
+  const pax = (key) => {
+    const p = byKey[key];
+    const [gender, dob, phone, meal_pref, berth_pref] = p.details;
+    return { profile_id: ids[key], full_name: p.name, gender, age: new Date().getFullYear() - Number(dob.slice(0, 4)), phone, meal_pref, berth_pref };
   };
 
-  // 1. Urgent trip waiting for Arjun's approval.
-  const t1 = await as('rahul').rpc('submit_trip', {
-    p_trip: { title: `Pune → Nagpur · CME`, purpose: 'Doctor meetings and CME sponsorship at GMC Nagpur', origin: 'Pune', destination: 'Nagpur',
-      start_date: d(4), end_date: d(6), is_urgent: true, urgency_reason: 'CME date was moved up by the organisers',
-      justification: 'Short notice: dates confirmed by the hospital this week', traveller_ids: [] },
-    p_segments: [
-      seg('train', 'Pune', 'Nagpur', d(4), { travel_class: 'sleeper', notes: 'Preferred: Night · No. 12135' }),
-      seg('hotel', '', 'Nagpur', d(4), { end_date: d(6), notes: 'Hotel Centre Point' }),
-      seg('train', 'Nagpur', 'Pune', d(6), { travel_class: 'sleeper', notes: 'Preferred: Evening' }),
-    ],
-  });
-  await as('rahul').rpc('add_trip_passengers', { p_trip_id: t1, p: [pax('rahul')] });
-
-  // 2. Group trip approved by Arjun, waiting for the travel desk to book.
-  const t2 = await as('kavita').rpc('submit_trip', {
-    p_trip: { title: 'Mumbai → Ahmedabad · Stockist meet', purpose: 'Quarterly stockist meet, Gujarat region', origin: 'Mumbai', destination: 'Ahmedabad',
-      start_date: d(35), end_date: d(36), is_urgent: false, traveller_ids: [ids.rahul] },
-    p_segments: [
-      seg('train', 'Mumbai', 'Ahmedabad', d(35), { travel_class: 'sleeper', notes: 'Preferred: Early morning · No. 12009' }),
-      seg('hotel', '', 'Ahmedabad', d(35), { end_date: d(36), rooms: 2, notes: 'Fortune Park' }),
-      seg('train', 'Ahmedabad', 'Mumbai', d(36), { travel_class: 'sleeper', notes: 'Preferred: Evening' }),
-    ],
-  });
-  await as('kavita').rpc('add_trip_passengers', { p_trip_id: t2, p: [pax('kavita'), pax('rahul')] });
-  await as('arjun').rpc('decide_trip', { p_trip_id: t2, p_decision: 'approve', p_comment: 'Approved. Please carry the Q3 scheme sheets.' });
-
-  // 3. Flight (Mumbai–Delhi is a 30h+ surface journey, so air is allowed): approved, booked, tickets uploaded.
-  const t3 = await as('sameer').rpc('submit_trip', {
-    p_trip: { title: 'Mumbai → Delhi · Brand launch', purpose: 'North zone launch of CardioSun range', origin: 'Mumbai', destination: 'Delhi',
-      start_date: d(40), end_date: d(42), is_urgent: false, traveller_ids: [] },
-    p_segments: [
-      seg('flight', 'Mumbai', 'Delhi', d(40), { notes: 'Preferred: Morning' }),
-      seg('hotel', '', 'Delhi', d(40), { end_date: d(42), notes: 'Lemon Tree Premier, Aerocity' }),
-      seg('flight', 'Delhi', 'Mumbai', d(42), { notes: 'Preferred: Evening' }),
-    ],
-  });
-  await as('sameer').rpc('add_trip_passengers', { p_trip_id: t3, p: [pax('sameer')] });
-  await as('vikram').rpc('decide_trip', { p_trip_id: t3, p_decision: 'approve', p_comment: 'Go ahead.' });
-  await as('neha').rpc('set_trip_cost', { p_trip_id: t3, p_amount: 18450 });
-  await as('neha').rpc('book_trip', { p_trip_id: t3, p_booking_ref: 'PNR 6E-4XK2Q / AI-7HM31', p_note: 'Hotel confirmation LT-55120' });
-  await ticket(t3, 'E-ticket Mumbai-Delhi.pdf', 'ticket', ['E-TICKET  (demo)', `Passenger: SAMEER KHAN   PNR: 6E-4XK2Q`,
-    `${d(40)}  BOM 07:10 -> DEL 09:25   Economy`, `${d(42)}  DEL 19:40 -> BOM 21:55   Economy`, `Booked by ${COMPANY} Travel Desk`]);
-  await ticket(t3, 'Hotel voucher Delhi.pdf', 'hotel', ['HOTEL VOUCHER  (demo)', 'Lemon Tree Premier, Aerocity, New Delhi',
-    `Check-in ${d(40)}   Check-out ${d(42)}   1 room`, 'Confirmation: LT-55120   Breakfast included']);
-
-  // 4. Priya: a past trip, booked, with the ticket attached.
-  const t4 = await as('priya').rpc('submit_trip', {
-    p_trip: { title: 'Mumbai → Nashik · Distributor review', purpose: 'Monthly distributor review and secondary sales audit', origin: 'Mumbai', destination: 'Nashik',
-      start_date: d(31), end_date: d(31), is_urgent: false, traveller_ids: [] },
-    p_segments: [seg('cab', 'Mumbai', 'Nashik', d(31), { travel_class: 'economy_cab', notes: 'Return same day' })],
-  });
-  await as('priya').rpc('add_trip_passengers', { p_trip_id: t4, p: [pax('priya')] });
-  await as('arjun').rpc('decide_trip', { p_trip_id: t4, p_decision: 'approve', p_comment: '' });
-  await as('neha').rpc('set_trip_cost', { p_trip_id: t4, p_amount: 2400 });
-  await as('neha').rpc('book_trip', { p_trip_id: t4, p_booking_ref: 'Cab MH-04-KX-2231', p_note: 'Driver: Santosh, 98190 22110' });
-  await ticket(t4, 'Cab booking Nashik.pdf', 'ticket', ['CAB BOOKING  (demo)', 'Passenger: PRIYA SHARMA', `${d(-18)}  Mumbai (Andheri) -> Nashik, return same day`, 'Vehicle: MH-04-KX-2231 (Dzire)   Driver: Santosh']);
-  // Move it into the past: it happened 18 days ago.
-  await db.query(`update public.trips set start_date = $2, end_date = $2, created_at = now() - interval '25 days', updated_at = now() - interval '19 days' where id = $1`, [t4, d(-18)]);
-  await db.query('update public.trip_segments set start_date = $2 where trip_id = $1', [t4, d(-18)]);
-  await db.query(`update public.trip_events set created_at = now() - interval '24 days' where trip_id = $1`, [t4]);
-
-  // 5. Priya: an out-of-policy flight that Arjun rejected (Pune is a short drive).
-  const t5 = await as('priya').rpc('submit_trip', {
-    p_trip: { title: 'Mumbai → Pune · Hospital tender', purpose: 'Rate contract presentation at Ruby Hall', origin: 'Mumbai', destination: 'Pune',
-      start_date: d(33), end_date: d(33), is_urgent: false, justification: 'Early 9 am slot with the purchase committee', traveller_ids: [] },
-    p_segments: [seg('flight', 'Mumbai', 'Pune', d(33), { notes: 'Preferred: Early morning' })],
-  });
-  await as('priya').rpc('add_trip_passengers', { p_trip_id: t5, p: [pax('priya')] });
-  await as('arjun').rpc('decide_trip', { p_trip_id: t5, p_decision: 'reject', p_comment: 'Pune is about 3 hours by road. Please take the Deccan Queen or an economy cab the evening before.' });
+  // Trips go through the real functions as each person, so statuses, policy checks and the
+  // timeline are exactly what the app would produce.
+  for (const t of profile.trips({ d, seg })) {
+    const id = await as(t.by).rpc('submit_trip', {
+      p_trip: { is_urgent: false, is_international: false, ...t.trip, traveller_ids: (t.with || []).map((k) => ids[k]) },
+      p_segments: t.segments,
+    });
+    await as(t.by).rpc('add_trip_passengers', { p_trip_id: id, p: [t.by, ...(t.with || [])].map(pax) });
+    if (t.decide) {
+      const [who, decision, comment] = t.decide;
+      await as(who).rpc('decide_trip', { p_trip_id: id, p_decision: decision, p_comment: comment });
+    }
+    if (t.book) {
+      await as('hr').rpc('set_trip_cost', { p_trip_id: id, p_amount: t.book.cost });
+      await as('hr').rpc('book_trip', { p_trip_id: id, p_booking_ref: t.book.ref, p_note: t.book.note });
+    }
+    for (const [file, kind, lines] of t.tickets || []) {
+      const path = `${id}/seed-${file}`;
+      const bytes = makePdf([...lines, `Booked by the ${profile.company} Travel Desk`]);
+      await db.query('insert into storage.objects (bucket_id, name, metadata) values ($1, $2, $3)', ['trip-docs', path, JSON.stringify({ mimetype: 'application/pdf' })]);
+      await db.query('insert into demo.files (bucket_id, name, mime, data) values ($1, $2, $3, $4)', ['trip-docs', path, 'application/pdf', bytes]);
+      await as('hr').rpc('add_trip_document', { p_trip_id: id, p_path: path, p_file_name: file, p_kind: kind, p_size: bytes.length });
+    }
+    if (t.pastDays) {
+      // Planned a month ahead, then moved into the past: it happened pastDays ago.
+      const day = d(-t.pastDays);
+      await db.query(`update public.trips set start_date = $2, end_date = $2, created_at = now() - interval '25 days', updated_at = now() - interval '19 days' where id = $1`, [id, day]);
+      await db.query('update public.trip_segments set start_date = $2 where trip_id = $1', [id, day]);
+      await db.query(`update public.trip_events set created_at = now() - interval '24 days' where trip_id = $1`, [id]);
+    }
+  }
 
   await db.query('insert into demo.meta (k, v) values ($1, $2)', ['personas', JSON.stringify(ids)]);
 }
 
 // ---------------------------------------------------------------- start-up
-export async function createDemoClient(onProgress = () => {}, inject = {}) {
+export async function createDemoClient(slug, onProgress = () => {}, inject = {}) {
+  const profile = companyProfile(slug);
   onProgress('Loading the database engine…');
   const [{ PGlite }, schema] = inject.PGlite ? [inject, inject.schema] : await Promise.all([
     import(PGLITE),
@@ -498,14 +440,14 @@ export async function createDemoClient(onProgress = () => {}, inject = {}) {
       return r.text();
     }),
   ]);
-  const dbName = `traveldesk-demo-${hash(schema)}`;
+  const dbName = `traveldesk-demo-${slug}-${hash(schema + JSON.stringify(profile) + String(profile.trips))}`;
   let db;
   try {
     db = await PGlite.create(inject.PGlite ? {} : { dataDir: `idb://${dbName}` });
   } catch {
     db = await PGlite.create(); // IndexedDB blocked (private mode): keep the demo in memory
   }
-  const client = new DemoClient(db, dbName);
+  const client = new DemoClient(db, dbName, profile);
 
   const ready = await db.query(`select to_regclass('demo.meta') is not null as ok`);
   let ids = null;
@@ -516,7 +458,7 @@ export async function createDemoClient(onProgress = () => {}, inject = {}) {
   if (!ids) {
     const partial = await db.query(`select to_regclass('public.trips') is not null as yes`);
     if (partial.rows[0].yes) return client.reset(); // an earlier set-up was interrupted
-    onProgress('Setting up Sunrise Pharma (sample company)…');
+    onProgress(`Setting up ${profile.company} (sample data)…`);
     await db.exec(schema);
     await db.exec(`create schema demo;
       create table demo.meta (k text primary key, v text not null);
