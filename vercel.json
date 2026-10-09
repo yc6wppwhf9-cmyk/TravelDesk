@@ -25,23 +25,14 @@
   ],
   "redirects": [
     {
-      "source": "/demo/",
-      "destination": "/demo",
-      "permanent": true
-    },
-    {
-      "source": "/indoco/",
-      "destination": "/indoco",
+      "source": "/:slug/",
+      "destination": "/:slug",
       "permanent": true
     }
   ],
   "rewrites": [
     {
-      "source": "/demo",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/indoco",
+      "source": "/:slug",
       "destination": "/index.html"
     }
   ]

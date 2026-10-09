@@ -31,15 +31,18 @@ can switch between three people:
 
 The **Demo guide** panel walks through the four steps and offers a sample ticket PDF to upload.
 
-**Company-specific demos.** `public/sandbox/companies.js` holds each sample company: its name,
-people, preferred hotels and five sample trips. `/indoco` loads a version prepared for Indoco
-Remedies (medical reps, a Regional Manager and Corporate HR, with Maharashtra field trips).
-Its people and trips are fictional. To add a demo for another prospect:
+**Company-specific demos.** `public/sandbox/companies.js` holds the sample companies, and
+`/<key>` opens one (for example `/indoco` or `/dhanuka`). Each one has its own people, preferred
+hotels and five sample trips. People and trips are always fictional. Prospect demos are generated from
+an industry template (pharma, agri, building materials, paints, electricals, consumer), which sets
+job titles and trip purposes, and a region (west, north, gujarat, south), which sets cities, routes,
+names and hotels. To add a prospect, add one line to `PROSPECTS`, e.g.
 
-1. Copy the `indoco` entry in `companies.js`, give it a new key, and change the names, cities and hotels.
-2. Map a URL to that key in `DEMO_PATHS` in `public/client.js`.
-3. Add the same path to `rewrites` (and the trailing-slash form to `redirects`) in `vercel.json`,
-   and to the redirect list in `server.js`.
+```js
+acme: { company: 'Acme Ltd', short: 'Acme', industry: 'pharma', region: 'west' },
+```
+
+and the demo is live at `/acme` after the next deploy. Any other path opens the real portal.
 
 How it works: the page loads the same SQL as production (`supabase/migrations`) into
 [PGlite](https://pglite.dev), which is Postgres compiled to WebAssembly, inside the visitor's browser.

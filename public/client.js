@@ -1,9 +1,10 @@
 // Picks the backend: the real Supabase project, or the in-browser demo sandbox at /demo.
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from './config.js';
 
-// Demo URLs and the sample company each one loads (public/sandbox/companies.js).
-const DEMO_PATHS = { '/demo': 'sunrise', '/indoco': 'indoco' };
-const demoSlug = DEMO_PATHS[location.pathname.replace(/\/+$/, '')] || null;
+// A single-segment path like /demo or /indoco opens that company's demo
+// (public/sandbox/companies.js); everything else is the real portal.
+const slug = location.pathname.replace(/^\/+|\/+$/g, '').toLowerCase();
+const demoSlug = /^[a-z0-9-]+$/.test(slug) && (await import('./sandbox/companies.js')).COMPANIES[slug] ? slug : null;
 export const DEMO = Boolean(demoSlug);
 
 async function connect() {
