@@ -338,6 +338,17 @@ a.chip:hover { text-decoration: none; transform: translateY(-2px); box-shadow: 0
 .hotel button { padding: 6px 14px; }
 
 /* =====================================================================
+   Passengers (planner)
+   ===================================================================== */
+.pax-list { display: grid; gap: 12px; margin-bottom: 14px; }
+.pax { border: 1.5px solid var(--line); border-radius: 14px; padding: 14px 16px 2px; background: var(--panel-2); animation: unfold 0.4s var(--ease) both; transition: border-color 0.2s; }
+.pax:focus-within { border-color: color-mix(in srgb, var(--brand) 45%, var(--line)); background: var(--panel); }
+.pax-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.pax-num { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--grad); color: #fff; font-size: 0.8rem; font-weight: 800; }
+.pax-add { display: flex; gap: 10px; flex-wrap: wrap; }
+.pax-add input { flex: 1 1 260px; }
+
+/* =====================================================================
    Tickets & documents
    ===================================================================== */
 .doc-list { display: grid; gap: 10px; margin-bottom: 14px; }

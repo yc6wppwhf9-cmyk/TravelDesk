@@ -50,6 +50,16 @@ Company travel portal for **High Spirit Commercial Ventures Pvt Ltd**, built aro
 - Live fares and in-app booking need a travel-supplier API (TBO, Tripjack, a corporate booking
   platform, etc.). That is the next step once credentials are available.
 
+### Passengers & costs
+
+- Travellers don't enter fares. They give the route, dates, a preferred time (and the train/flight
+  number if they already know it), plus **passenger details for the ticket**: name as on ID,
+  gender, age (date of birth for yourself, saved for next time), mobile, meal and berth preference.
+- **Add colleague** searches people on TravelDesk and prefills their name, gender and age.
+  Phone and date of birth stay private. **Add guest** covers anyone not on TravelDesk.
+- When HR/admin mark a trip booked they enter the **amount paid**. That figure feeds *Booked spend*
+  and the CSV export.
+
 ### Tickets & documents
 
 Admin/HR open a trip, choose the type (ticket, hotel voucher, visa, other), then drag the PDFs onto
@@ -130,6 +140,7 @@ Applied to the Supabase project `TravelDesk` (`jnlrvehlenrtbdqmgbbr`), in order:
 7. `20261007000510_group_trips.sql`: co-travellers, trip origin, hotel rooms, visibility and approval rules
 8. `20261007000520_distance_and_group_policy.sql`: distance-based air eligibility, per-traveller policy checks
 9. `20261007000600_trip_documents.sql`: private `trip-docs` storage bucket and the ticket/voucher records
+10. `20261009000100_passengers.sql`: passenger details, private saved traveller details, booked amount
 
 `supabase/manual/cleanup_legacy_policy.sql` is an **optional** one-off script. It removes the
 placeholder grades G1–G3 and their unused columns from the first migration. The app already

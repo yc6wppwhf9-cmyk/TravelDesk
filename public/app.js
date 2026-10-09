@@ -15,6 +15,7 @@ const STATUS = {
   booked: 'Booked',
   cancelled: 'Cancelled',
 };
+const PREF_TIMES = { '': 'Any time', 'Early morning': 'Early morning (before 8)', Morning: 'Morning (8–12)', Afternoon: 'Afternoon (12–5)', Evening: 'Evening (5–9)', Night: 'Night / overnight' };
 const SEG_TYPES = {
   flight: 'Flight',
   train: 'Train',
@@ -622,7 +623,7 @@ async function viewMyTrips() {
       h('div', { class: 'title' }, t.title),
       h('div', { class: 'meta' },
         h('span', { class: 'muted' }, `📅 ${fmtDate(t.start_date)} – ${fmtDate(t.end_date)}`),
-        h('strong', {}, money(t.total_estimate))),
+        Number(t.total_estimate) > 0 ? h('strong', {}, money(t.total_estimate)) : h('span', { class: 'muted small' }, `${t.traveller_count || 1} traveller${(t.traveller_count || 1) > 1 ? 's' : ''}`)),
       t.traveller_count > 1 ? h('div', { class: 'muted small', style: 'margin-top:6px' }, `👥 ${t.traveller_names}`) : null);
   };
 
@@ -669,16 +670,18 @@ async function viewNewTrip() {
     title: '', purpose: '', origin: '', destination: '', start_date: '', end_date: '',
     is_international: false, is_urgent: false, urgency_reason: '', justification: '',
     traveller_ids: [],
+    passengers: [],
     segments: [],
   };
   let lastCheck = null;
   let timer;
 
-  const [, cities, hotels, people] = await Promise.all([
+  const [, cities, hotels, people, myDetails] = await Promise.all([
     loadGeo(),
     call(sb.from('cities').select('name, category').order('name')),
     call(sb.from('preferred_hotels').select('*').eq('active', true)),
     call(sb.from('profiles').select('id, full_name, grade, department').eq('active', true).neq('id', ctx.user.id).order('full_name')),
+    sb.from('person_details').select('*').eq('id', ctx.user.id).maybeSingle().then((r) => r.data),
   ]);
   const cityCat = Object.fromEntries(cities.map((c) => [c.name, c.category]));
   const title = (n) => n.replace(/\b\w/g, (x) => x.toUpperCase());
@@ -727,40 +730,104 @@ async function viewNewTrip() {
   function tripPayload() {
     const segments = state.segments.map((sg) => ({
       ...sg,
+      notes: [sg.pref_time ? `Preferred: ${sg.pref_time}` : '', sg.ref_no ? `No. ${sg.ref_no}` : '', sg.notes].filter(Boolean).join(' · '),
       est_cost: sg.est_cost === '' ? 0 : Number(sg.est_cost),
       duration_hours: sg.duration_hours === '' ? null : Number(sg.duration_hours),
       rooms: sg.type === 'hotel' ? Math.max(1, Number(sg.rooms) || 1) : 1,
       end_date: sg.end_date || null,
     }));
-    const { segments: _omit, ...trip } = state;
-    void _omit;
+    const { segments: _omit, passengers: _pax, ...trip } = state;
+    void _omit; void _pax;
+    trip.title = `${state.origin ? title(cityKey(state.origin)) + ' → ' : ''}${title(cityKey(state.destination)) || 'Trip'}${state.start_date ? ' · ' + fmtDate(state.start_date) : ''}`;
     return { trip, segments };
   }
 
-  const groupSize = () => 1 + state.traveller_ids.length;
+  const groupSize = () => Math.max(1, state.passengers.length);
 
-  // ---------- travellers
-  const travellersBox = h('div');
-  function renderTravellers() {
-    const pick = select(
-      Object.fromEntries([['', '+ Add a colleague…'], ...people.filter((p) => !state.traveller_ids.includes(p.id))
-        .map((p) => [p.id, `${p.full_name} (${p.grade}${p.department ? ', ' + p.department : ''})`])]),
-      '',
-      { onchange: (e) => { if (e.target.value) { state.traveller_ids.push(e.target.value); renderTravellers(); renderSegments(); scheduleCheck(); } } }
-    );
-    travellersBox.replaceChildren(
-      h('div', { class: 'links', style: 'margin-bottom:8px' },
-        h('span', { class: 'chip' }, `${ctx.profile.full_name} (${ctx.profile.grade}) · organiser`),
-        state.traveller_ids.map((id) => h('span', { class: 'chip' },
-          `${peopleById[id]?.full_name || 'Colleague'} (${peopleById[id]?.grade || '?'}) `,
-          h('button', { type: 'button', class: 'link', title: 'Remove', onclick: () => {
-            state.traveller_ids = state.traveller_ids.filter((x) => x !== id);
-            renderTravellers(); renderSegments(); scheduleCheck();
-          } }, '✕')))),
-      pick,
-      h('div', { class: 'hint' }, groupSize() > 1
-        ? `One request for all ${groupSize()} travellers — your manager approves once. Each person's band is still checked. Enter costs for the whole group.`
-        : 'Travelling with colleagues? Add them here and book everyone in one request.'));
+  // ---------- passengers
+  const ageFromDob = (d) => {
+    if (!d) return '';
+    const b = new Date(d + 'T00:00:00');
+    const n = new Date();
+    return String(n.getFullYear() - b.getFullYear() - (n < new Date(n.getFullYear(), b.getMonth(), b.getDate()) ? 1 : 0));
+  };
+  const me = myDetails || {};
+  state.passengers.push({
+    self: true, profile_id: ctx.user.id, full_name: me.id_name || ctx.profile.full_name, gender: me.gender || '',
+    dob: me.date_of_birth || '', age: ageFromDob(me.date_of_birth), phone: me.phone || '',
+    meal_pref: me.meal_pref || '', berth_pref: me.berth_pref || '', label: `${ctx.profile.full_name} (you · ${ctx.profile.grade})`,
+  });
+  const GENDERS = { '': 'Select…', male: 'Male', female: 'Female', other: 'Other' };
+  const MEALS = { '': 'No preference', veg: 'Vegetarian', jain: 'Jain', vegan: 'Vegan' };
+  const BERTHS = { '': 'No preference', lower: 'Lower', middle: 'Middle', upper: 'Upper', side_lower: 'Side lower', side_upper: 'Side upper' };
+
+  const paxWrap = h('div', { class: 'pax-list' });
+  const colleagueInput = h('input', { list: 'colleague-list', placeholder: 'Search a colleague by name…' });
+  const colleagueList = h('datalist', { id: 'colleague-list' });
+  const colleagueLabel = (p) => `${p.full_name} — ${p.grade}${p.department ? ', ' + p.department : ''}`;
+
+  function renderColleagueOptions() {
+    const taken = new Set(state.passengers.map((x) => x.profile_id).filter(Boolean));
+    colleagueList.replaceChildren(...people.filter((p) => !taken.has(p.id)).map((p) => h('option', { value: colleagueLabel(p) })));
+  }
+
+  let adding = false;
+  async function addColleague() {
+    const v = colleagueInput.value.trim();
+    if (!v || adding) return;
+    adding = true;
+    colleagueInput.value = '';
+    try {
+    const match = people.find((p) => colleagueLabel(p) === v) || people.find((p) => p.full_name.toLowerCase() === v.toLowerCase());
+    if (!match) {
+      toast(`"${v}" isn't on TravelDesk yet — added as a guest passenger`);
+      state.passengers.push({ profile_id: null, full_name: v, gender: '', age: '', phone: '', meal_pref: '', berth_pref: '', label: 'Guest' });
+    } else if (state.passengers.some((x) => x.profile_id === match.id)) {
+      return toast(`${match.full_name} is already added`, true);
+    } else {
+      const { data } = await sb.rpc('passenger_prefill', { p_ids: [match.id] });
+      const pre = (data || [])[0] || {};
+      state.passengers.push({
+        profile_id: match.id, full_name: pre.id_name || match.full_name, gender: pre.gender || '', age: pre.age != null ? String(pre.age) : '',
+        phone: '', meal_pref: '', berth_pref: '', label: `${match.full_name} (${match.grade}${match.department ? ', ' + match.department : ''})`,
+      });
+    }
+    syncTravellers();
+    } finally {
+      adding = false;
+    }
+  }
+  colleagueInput.addEventListener('change', addColleague);
+  colleagueInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addColleague(); } });
+
+  function syncTravellers() {
+    state.traveller_ids = state.passengers.filter((x) => x.profile_id && !x.self).map((x) => x.profile_id);
+    renderPassengers();
+    renderSegments();
+    scheduleCheck();
+  }
+
+  function renderPassengers() {
+    renderColleagueOptions();
+    const hasTrain = state.segments.some((x) => x.type === 'train');
+    paxWrap.replaceChildren(...state.passengers.map((px, i) => {
+      const set = (k) => (e) => { px[k] = e.target.value; if (k === 'dob') px.age = ageFromDob(px.dob); };
+      return h('div', { class: 'pax' },
+        h('div', { class: 'pax-head' },
+          h('span', { class: 'pax-num' }, String(i + 1)),
+          h('strong', {}, px.self ? 'You' : px.profile_id ? 'Colleague' : 'Guest'),
+          h('span', { class: 'muted small' }, px.label),
+          px.self ? null : h('button', { type: 'button', class: 'link', style: 'margin-left:auto', onclick: () => { state.passengers.splice(i, 1); syncTravellers(); } }, 'Remove')),
+        h('div', { class: 'row' },
+          field('Name as on ID', h('input', { value: px.full_name, oninput: set('full_name'), placeholder: 'As printed on Aadhaar / PAN / passport' }), null, true),
+          field('Gender', select(GENDERS, px.gender, { onchange: set('gender') }), null, true),
+          px.self
+            ? field('Date of birth', h('input', { type: 'date', value: px.dob, oninput: set('dob') }), 'Saved for next time', true)
+            : field('Age', h('input', { type: 'number', min: '0', max: '120', value: px.age, oninput: set('age') }), null, true),
+          field('Mobile', h('input', { type: 'tel', value: px.phone, oninput: set('phone'), placeholder: '10-digit mobile' })),
+          field('Meal', select(MEALS, px.meal_pref, { onchange: set('meal_pref') })),
+          hasTrain ? field('Berth', select(BERTHS, px.berth_pref, { onchange: set('berth_pref') })) : null));
+    }));
   }
 
   // ---------- journey: distance, allowed modes, nearest airports
@@ -865,7 +932,6 @@ async function viewNewTrip() {
         : h('div', { class: 'notice ok' }, 'No approval needed — this trip will be approved automatically.'),
       h('dl', { class: 'kv' },
         c.traveller_count > 1 ? [h('dt', {}, 'Travellers'), h('dd', {}, `${c.traveller_count}: ${c.traveller_names}`)] : null,
-        h('dt', {}, 'Itinerary estimate'), h('dd', {}, money(c.total)),
         h('dt', {}, 'Trip length'), h('dd', {}, `${c.trip_days} day(s)`),
         h('dt', {}, 'Meals (on actuals)'), h('dd', {}, `up to ${money(c.meal_cap_per_day)}/day per person · ${money(c.meal_budget)}`),
         c.laundry_allowance > 0 ? [h('dt', {}, 'Laundry'), h('dd', {}, `up to ${money(c.laundry_allowance)} per person`)] : null,
@@ -927,14 +993,17 @@ async function viewNewTrip() {
             isHotel ? field('Rooms', h('input', { type: 'number', min: '1', max: '50', value: sg.rooms, oninput: set('rooms') })) : null,
             classInput,
             durationField,
-            field(isHotel ? 'Total cost (all rooms, all nights)' : groupSize() > 1 ? 'Estimated cost (whole group)' : 'Estimated cost',
-              h('input', { type: 'number', min: '0', step: '1', value: sg.est_cost, oninput: set('est_cost') }))),
-          field('Notes', h('input', { value: sg.notes, oninput: set('notes'), placeholder: 'Preferred timing, train/flight no., hotel name…' })),
+            isHotel ? null : field('Preferred time', select(PREF_TIMES, sg.pref_time || '', { onchange: set('pref_time') })),
+            sg.type === 'train' || sg.type === 'flight'
+              ? field(sg.type === 'train' ? 'Train no. (if known)' : 'Flight no. (if known)', h('input', { value: sg.ref_no || '', oninput: set('ref_no'), placeholder: sg.type === 'train' ? 'e.g. 12309' : 'e.g. 6E 2341' }))
+              : null,
+            isHotel ? field('Hotel / area preference', h('input', { value: sg.notes, oninput: set('notes'), placeholder: 'Near office, specific hotel…' })) : null),
           sugg);
         refreshSugg();
         return el;
       })
     );
+    renderPassengers();
   }
 
   // Per-item suggestions: allowed-mode warning, nearest airports, search links, preferred hotels.
@@ -1035,13 +1104,21 @@ async function viewNewTrip() {
       e.preventDefault();
       submitBtn.disabled = true;
       try {
+        const missing = state.passengers.findIndex((x) => !x.full_name.trim() || !x.gender || !(x.self ? x.dob : x.age));
+        if (missing >= 0) throw new Error(`Passenger ${missing + 1}: name, gender and ${state.passengers[missing].self ? 'date of birth' : 'age'} are needed for the ticket`);
+        if (!state.segments.length) throw new Error('Add at least one itinerary item (train, flight, hotel…)');
         const p = tripPayload();
         const id = await call(sb.rpc('submit_trip', { p_trip: p.trip, p_segments: p.segments }));
+        const self = state.passengers.find((x) => x.self);
+        await Promise.all([
+          call(sb.rpc('add_trip_passengers', { p_trip_id: id, p: state.passengers.map(({ label, self: _s, dob, ...x }) => ({ ...x, profile_id: x.profile_id || null })) })),
+          sb.rpc('update_my_details', { p: { id_name: self.full_name, gender: self.gender, date_of_birth: self.dob, phone: self.phone, meal_pref: self.meal_pref, berth_pref: self.berth_pref } }),
+        ]);
         toast(lastCheck?.requires_approval ? 'Trip submitted for approval' : 'Trip approved');
         await refreshPendingCount();
         location.hash = `#/trip/${id}`;
-      } catch {
-        /* toast already shown */
+      } catch (err) {
+        if (err?.message && !err.code) toast(err.message, true);
       } finally {
         submitBtn.disabled = false;
       }
@@ -1049,18 +1126,27 @@ async function viewNewTrip() {
   },
     h('div', { class: 'card' },
       h('h2', {}, 'Trip details'),
-      field('Trip title', bind('title', h('input', { placeholder: 'e.g. Distributor visit – Muzaffarpur', required: true })), null, true),
       h('div', { class: 'row' },
         field('Travelling from', bind('origin', h('input', { list: 'city-list', placeholder: 'Your base city' }), 'input', renderJourney)),
         field('Main destination', bind('destination', h('input', { required: true, list: 'city-list' }), 'input', renderJourney), null, true),
         field('Start date', bind('start_date', h('input', { type: 'date', required: true })), null, true),
         field('End date', bind('end_date', h('input', { type: 'date', required: true })), null, true)),
-      field('Purpose of travel', bind('purpose', h('textarea', { required: true, placeholder: 'Meetings, market visits, client, expected outcome…' })), null, true),
+      field('Purpose of travel', bind('purpose', h('input', { required: true, placeholder: 'e.g. Distributor review, client meeting, market visit' })), null, true),
       h('div', { class: 'actions', style: 'gap:24px;margin-bottom:10px' },
         h('label', { class: 'check' }, intl, `Foreign travel (${s.international_advance_days} days notice)`),
         h('label', { class: 'check' }, urgent, 'This is an urgent trip')),
-      urgentField,
-      field("Who's travelling?", travellersBox)),
+      urgentField),
+    h('div', { class: 'card' },
+      h('h2', {}, 'Passengers'),
+      h('p', { class: 'muted small' }, 'Details exactly as needed on the ticket. Add colleagues travelling with you — one request covers everyone and your manager approves once.'),
+      paxWrap,
+      h('div', { class: 'pax-add' },
+        colleagueInput, colleagueList,
+        h('button', { type: 'button', onclick: addColleague }, '+ Add colleague'),
+        h('button', { type: 'button', onclick: () => {
+          state.passengers.push({ profile_id: null, full_name: '', gender: '', age: '', phone: '', meal_pref: '', berth_pref: '', label: 'Not on TravelDesk' });
+          syncTravellers();
+        } }, '+ Add guest'))),
     h('div', { class: 'card' },
       h('h2', {}, 'Itinerary'),
       h('p', { class: 'muted small' }, 'Air and rail are booked only by the Travel Desk. Road travel may be booked by you after approval and reimbursed on actuals.'),
@@ -1070,7 +1156,7 @@ async function viewNewTrip() {
     h('div', { class: 'card' }, justField, h('div', { class: 'actions' }, submitBtn, h('a', { class: 'btn', href: '#/trips' }, 'Cancel')))
   );
 
-  renderTravellers();
+  renderPassengers();
   renderJourney();
   renderSegments();
   mount(
@@ -1183,6 +1269,7 @@ async function viewTrip(id) {
     call(sb.from('trip_events').select('*, actor:profiles(full_name)').eq('trip_id', id).order('id')),
   ]);
   if (!trip) return mount(h('div', { class: 'card empty' }, 'Trip not found or you do not have access.'));
+  const pax = await call(sb.from('trip_passengers').select('*').eq('trip_id', id).order('position'));
   const docs = await call(sb.from('trip_documents').select('*, uploader:profiles!trip_documents_uploaded_by_fkey(full_name)').eq('trip_id', id).order('created_at'));
 
   const canApprove = trip.status === 'pending_approval' && (await call(sb.rpc('can_approve_trip', { p_trip: id })));
@@ -1209,6 +1296,7 @@ async function viewTrip(id) {
   if (canBook) {
     const ref = h('input', { placeholder: 'PNR / booking reference(s)' });
     const note = h('input', { placeholder: 'Optional note to traveller' });
+    const paid = h('input', { type: 'number', min: '0', step: '1', placeholder: 'Total for all tickets & hotels' });
     const helper = segs
       .map((sg, i) => [i, searchLinks(sg, trip.is_international)])
       .filter(([, links]) => links.length);
@@ -1224,8 +1312,12 @@ async function viewTrip(id) {
       h('h2', {}, 'Travel desk: mark as booked'),
       h('p', { class: 'muted small' }, 'Upload the ticket PDFs under "Tickets & documents", then enter the PNR here.'),
       field('Booking reference', ref, null, true),
+      field(`Amount paid (${ctx.settings?.currency || 'INR'})`, paid, 'Used for spend reports', true),
       field('Note', note),
       h('button', { class: 'primary', onclick: async () => {
+        if (paid.value === '' || Number(paid.value) < 0) return toast('Enter the amount paid', true);
+        if (!ref.value.trim()) return toast('Enter the PNR / booking reference', true);
+        await call(sb.rpc('set_trip_cost', { p_trip_id: id, p_amount: Number(paid.value) }));
         await call(sb.rpc('book_trip', { p_trip_id: id, p_booking_ref: ref.value, p_note: note.value }));
         toast('Marked as booked');
         router();
@@ -1251,8 +1343,7 @@ async function viewTrip(id) {
       h('td', {}, SEG_TYPES[sg.type] || sg.type),
       h('td', {}, route || '—', sg.notes ? h('div', { class: 'muted small' }, sg.notes) : null),
       h('td', { class: 'nowrap' }, fmtDate(sg.start_date), sg.end_date ? ` – ${fmtDate(sg.end_date)}` : ''),
-      h('td', {}, cls || '', sg.duration_hours ? h('div', { class: 'muted small' }, `surface ${sg.duration_hours} h`) : null),
-      h('td', { class: 'right nowrap' }, money(sg.est_cost)));
+      h('td', {}, cls || '', sg.duration_hours ? h('div', { class: 'muted small' }, `~${sg.duration_hours} h by rail/road`) : null));
   };
 
   mount(
@@ -1271,7 +1362,7 @@ async function viewTrip(id) {
             h('dt', {}, 'Purpose'), h('dd', {}, trip.purpose),
             trip.urgency_reason ? [h('dt', {}, 'Urgency'), h('dd', {}, trip.urgency_reason)] : null,
             trip.justification ? [h('dt', {}, 'Justification'), h('dd', {}, trip.justification)] : null,
-            h('dt', {}, 'Estimate'), h('dd', {}, money(trip.total_estimate)),
+            Number(trip.total_estimate) > 0 && trip.status === 'booked' ? [h('dt', {}, 'Booked cost'), h('dd', {}, money(trip.total_estimate))] : null,
             h('dt', {}, 'Approver'), h('dd', {}, trip.approver_name || trip.manager_name || 'Travel desk admin'),
             trip.approval_comment ? [h('dt', {}, 'Approver comment'), h('dd', {}, trip.approval_comment)] : null,
             trip.booking_ref ? [h('dt', {}, 'Booking ref'), h('dd', {}, trip.booking_ref)] : null,
@@ -1285,8 +1376,19 @@ async function viewTrip(id) {
         h('div', { class: 'card' },
           h('h2', {}, 'Itinerary'),
           h('div', { class: 'table-wrap' }, h('table', {},
-            h('thead', {}, h('tr', {}, ['#', 'Type', 'Route / City', 'Dates', 'Class', 'Cost'].map((c, i) => h('th', { class: i === 5 ? 'right' : '' }, c)))),
-            h('tbody', {}, segs.map(segRow)))))),
+            h('thead', {}, h('tr', {}, ['#', 'Type', 'Route / City', 'Dates', 'Class'].map((c) => h('th', {}, c)))),
+            h('tbody', {}, segs.map(segRow))))),
+        pax.length ? h('div', { class: 'card' },
+          h('h2', {}, `Passengers (${pax.length})`),
+          h('div', { class: 'table-wrap' }, h('table', {},
+            h('thead', {}, h('tr', {}, ['#', 'Name as on ID', 'Gender / Age', 'Mobile', 'Meal', 'Berth'].map((c) => h('th', {}, c)))),
+            h('tbody', {}, pax.map((x, i) => h('tr', {},
+              h('td', {}, i + 1),
+              h('td', {}, h('strong', {}, x.full_name), x.is_guest ? h('span', { class: 'badge intl', style: 'margin-left:6px' }, 'Guest') : null),
+              h('td', {}, [x.gender ? x.gender[0].toUpperCase() + x.gender.slice(1) : '—', x.age != null ? ` · ${x.age}` : ''].join('')),
+              h('td', {}, x.phone || '—'),
+              h('td', {}, x.meal_pref ? x.meal_pref[0].toUpperCase() + x.meal_pref.slice(1) : '—'),
+              h('td', {}, x.berth_pref ? x.berth_pref.replace('_', ' ') : '—'))))))) : null),
       h('div', {},
         documentsCard(trip, docs),
         ...actions,
@@ -1325,14 +1427,14 @@ async function viewApprovals() {
     h('div', { class: 'card' },
       rows.length
         ? h('div', { class: 'table-wrap' }, h('table', {},
-            h('thead', {}, h('tr', {}, ['Traveller', 'Trip', 'Dates', 'Estimate', 'Flags', ''].map((c) => h('th', {}, c)))),
+            h('thead', {}, h('tr', {}, ['Traveller', 'Trip', 'Dates', 'Passengers', 'Flags', ''].map((c) => h('th', {}, c)))),
             h('tbody', {}, rows.map((t) =>
               h('tr', {},
                 h('td', {}, h('strong', {}, t.traveller_name), t.traveller_count > 1 ? h('span', { class: 'muted small' }, ` +${t.traveller_count - 1}`) : null,
                   h('div', { class: 'muted small' }, t.traveller_count > 1 ? t.traveller_names : `${t.grade} · ${t.department || '—'}`)),
                 h('td', {}, h('a', { href: `#/trip/${t.id}` }, t.title), h('div', { class: 'muted small' }, t.destination)),
                 h('td', { class: 'nowrap' }, fmtDate(t.start_date), ' – ', fmtDate(t.end_date)),
-                h('td', { class: 'nowrap' }, money(t.total_estimate)),
+                h('td', { class: 'nowrap' }, t.traveller_count || 1),
                 h('td', {}, tripBadges(t).slice(1)),
                 h('td', {}, h('div', { class: 'actions' },
                   h('a', { class: 'btn', href: `#/trip/${t.id}` }, 'Review'),
@@ -1392,7 +1494,7 @@ async function viewAdminBookings() {
     tile('Urgent & pending', count((t) => t.status === 'pending_approval' && t.is_urgent), true),
     tile('Approved, to book', count((t) => t.status === 'approved')),
     tile('Upcoming booked', count((t) => t.status === 'booked' && t.start_date >= today)),
-    tile('Approved spend', all.filter((t) => ['approved', 'booked'].includes(t.status)).reduce((a, t) => a + Number(t.total_estimate), 0), false, 'money'));
+    tile('Booked spend', all.filter((t) => t.status === 'booked').reduce((a, t) => a + Number(t.total_estimate), 0), false, 'money'));
 
   const tbody = h('tbody');
   const shown = h('span', { class: 'muted small' });
@@ -1415,7 +1517,7 @@ async function viewAdminBookings() {
                   h('div', { class: 'muted small' }, t.traveller_count > 1 ? t.traveller_names : `${t.grade} · ${t.department || '—'}`)),
         h('td', {}, t.title, h('div', { class: 'muted small' }, t.destination)),
         h('td', { class: 'nowrap' }, fmtDate(t.start_date), h('div', { class: 'muted small' }, `to ${fmtDate(t.end_date)}`)),
-        h('td', { class: 'nowrap' }, money(t.total_estimate)),
+        h('td', { class: 'nowrap' }, t.status === 'booked' && Number(t.total_estimate) > 0 ? money(t.total_estimate) : '—'),
         h('td', {}, t.approver_name || t.manager_name || '—'),
         h('td', {}, t.booking_ref || '—'),
         h('td', {}, tripBadges(t))))
@@ -1429,7 +1531,7 @@ async function viewAdminBookings() {
     ['status', 'Status', (r) => STATUS[r.status]], ['is_urgent', 'Urgent', (r) => (r.is_urgent ? 'Yes' : 'No')],
     ['is_international', 'Foreign', (r) => (r.is_international ? 'Yes' : 'No')],
     ['violations', 'Policy exceptions', (r) => (r.violations || []).map((v) => v.message).join(' | ')],
-    ['total_estimate', 'Estimate'], ['manager_name', 'Manager'], ['approver_name', 'Decided by'],
+    ['total_estimate', 'Booked cost', (r) => (r.status === 'booked' ? r.total_estimate : '')], ['manager_name', 'Manager'], ['approver_name', 'Decided by'],
     ['booking_ref', 'Booking ref'], ['created_at', 'Submitted'],
   ]));
 
@@ -1448,7 +1550,7 @@ async function viewAdminBookings() {
         h('label', { class: 'check' }, h('input', { type: 'checkbox', onchange: on('urgent') }), 'Urgent only')),
       shown,
       h('div', { class: 'table-wrap' }, h('table', {},
-        h('thead', {}, h('tr', {}, ['ID', 'Traveller', 'Trip', 'Dates', 'Estimate', 'Approver', 'Booking ref', 'Status'].map((c) => h('th', {}, c)))),
+        h('thead', {}, h('tr', {}, ['ID', 'Traveller', 'Trip', 'Dates', 'Booked cost', 'Approver', 'Booking ref', 'Status'].map((c) => h('th', {}, c)))),
         tbody)))
   );
   draw();
